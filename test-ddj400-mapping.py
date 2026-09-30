@@ -12,6 +12,8 @@ for deck in (1,2):
   ('PioneerDDJ400.shiftPressed',n,0x3f,''),('PioneerDDJ400.jogTouch',n,0x36,''),
   ('PioneerDDJ400.jogTurn',cc,0x22,''),('PioneerDDJ400.jogSearch',cc,0x29,''),
   ('PioneerDDJ400.tempoSliderMSB',cc,0x00,''),('PioneerDDJ400.tempoSliderLSB',cc,0x20,''),
+  ('PioneerDDJ400.cueLoopCallLeft',n,0x51,''),('PioneerDDJ400.cueLoopCallRight',n,0x53,''),
+  ('PioneerDDJ400.quickJumpBack',n,0x3e,''),('PioneerDDJ400.quickJumpForward',n,0x3d,''),
   ('volume',cc,0x13,'<fourteen-bit-msb/>'),('volume',cc,0x33,'<fourteen-bit-lsb/>'),
   ('hotcue_1_activate',pads,0x00,''),('beatloop_4_toggle',pads,0x64,''),
   ('PioneerDDJ400.beatjumpPadPressed',pads,0x21,''))]
@@ -26,11 +28,19 @@ class DDJ400(unittest.TestCase):
  def test_browser(self):
   # Clockwise 01-1E, counter-clockwise 7F-62.
   self.assertEqual(self.feed(0xb6,0x40,0x1e,0x40,0x62),[(0x420c,4,0,30,0.,0x4252),(0x420c,4,0,-30,0.,0x4252)])
+  # Clockwise zooms in on the DDJ-400 (confirmed on hardware), opposite to the FLX6 sign.
   self.assertEqual(self.feed(0xb6,0x64,0x1e,0x64,0x62,0x64,0x7f),
-   [(0x420c,4,0,-1,0.,0x425a),(0x420c,4,0,1,0.,0x425a),(0x420c,4,0,1,0.,0x425a)])
+   [(0x420c,4,0,1,0.,0x425a),(0x420c,4,0,-1,0.,0x425a),(0x420c,4,0,-1,0.,0x425a)])
   self.assertEqual(self.feed(0x96,0x41,0x7f,0x41,0),[(0x420c,0,0,0,0.,0x4250)])
   self.assertEqual(self.feed(0x96,0x42,0x7f,0x42,0),[(0x420d,0,0,0,0.,0x424b)])
   self.assertEqual(self.feed(0x96,0x46,0x7f,0x47,0x7f),[(0x4311,0,1,0,0.,0),(0x4311,0,2,0,0.,0)])
+  # Shift + LOAD deck 2 toggles the library view, like the FLX6's VIEW button.
+  self.assertEqual(self.feed(0x96,0x7a,0x7f,0x7a,0),[(0x202,0,0,0,0.,0x4256)])
+ def test_cue_loop_call(self):
+  self.assertEqual(self.feed(0x90,0x51,0x7f,0x51,0),[(0x4323,0,1,0,0.,0),(0x4323,2,1,0,0.,0)])
+  self.assertEqual(self.feed(0x91,0x53,0x7f),[(0x4322,0,2,0,0.,0)])
+  self.assertEqual(self.feed(0x90,0x3e,0x7f),[(0x4124,0,1,0,0.,0)])
+  self.assertEqual(self.feed(0x91,0x3d,0x7f),[(0x4125,0,2,0,0.,0)])
  def test_sync_short_and_long(self):
   self.assertEqual(self.feed(0x90,0x58,0x7f,0x58,0),[(0x4112,0,1,0,0.,0),(0x4112,2,1,0,0.,0)])
   self.assertEqual(self.feed(0x91,0x5c,0x7f,0x5c,0),[(0x4111,0,2,0,0.,0),(0x4111,2,2,0,0.,0)])

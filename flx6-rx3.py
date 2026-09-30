@@ -7,23 +7,30 @@ import xml.etree.ElementTree as ET
 BUTTONS={'play':0x4101,'cue_default':0x4102,'loop_in':0x410c,'loop_out':0x410d,
  'reloop_toggle':0x410e,'slip_enabled':0x4110,'sync_enabled':0x4112,'sync_leader':0x4111,
  'keylock':0x4108,'PioneerDDJFLX6.cycleTempoRange':0x4107,'quantize':0x410b,'pfl':0x5020,'LoadSelectedTrack':0x4311,
- 'MoveFocusForward':0x420c,'MoveFocusBackward':0x420d,'PioneerDDJFLX6.shiftPressed':0x4103}
+ 'MoveFocusForward':0x420c,'MoveFocusBackward':0x420d,'PioneerDDJFLX6.shiftPressed':0x4103,
+ # Native RX3 keys, reached through profile aliases.
+ 'CallPrev':0x4323,'CallNext':0x4322,'CueDelete':0x4124,'CueMemory':0x4125}
 ANALOG={'pregain':0x5019,'parameter3':0x501a,'parameter2':0x501b,'parameter1':0x501c,
  'volume':0x501e,'super1':0x509d,'crossfader':0x6017,'headMix':0x4405}
 PAD_BANKS={"pad-hotcue":0,"pad-beatloop":1,"pad-beatjump":3}
 LOOP_SIZES=("0.25","0.5","1","2","4","8","16","32")
 # jog_scale converts platter ticks to the FLX6's 7200 ticks per revolution.
 PROFILES={
- 'DDJ-FLX6':dict(prefix='PioneerDDJFLX6.',jog_scale=1,aliases={},extra=()),
+ 'DDJ-FLX6':dict(prefix='PioneerDDJFLX6.',jog_scale=1,zoom_sign=1,aliases={},extra=()),
  # Mixxx's Pioneer-DDJ-400 mapping; 720 ticks/revolution as in its scratchEnable().
- 'DDJ-400':dict(prefix='PioneerDDJ400.',jog_scale=10,
+ 'DDJ-400':dict(prefix='PioneerDDJ400.',jog_scale=10,zoom_sign=-1,
   aliases={'PioneerDDJ400.syncPressed':'sync_enabled','PioneerDDJ400.syncLongPressed':'sync_leader',
-   'MoveVertical':'PioneerDDJ400.browseRotate','MoveFocusBackward':'PioneerDDJ400.backPressed'},
-  # Shift + browse turn (official MIDI list); Mixxx leaves it unmapped.
-  extra=(('[Library]','PioneerDDJ400.waveformZoom','0xb6','0x64',set()),))}
+   'MoveVertical':'PioneerDDJ400.browseRotate','MoveFocusBackward':'PioneerDDJ400.backPressed',
+   # CUE/LOOP CALL: the RX3 calls memory cues, or halves/doubles an active loop.
+   'PioneerDDJ400.cueLoopCallLeft':'CallPrev','PioneerDDJ400.cueLoopCallRight':'CallNext',
+   # Shift + CUE/LOOP CALL (Mixxx: 32-beat jumps) as in rekordbox: delete / memory.
+   'PioneerDDJ400.quickJumpBack':'CueDelete','PioneerDDJ400.quickJumpForward':'CueMemory'},
+  # Official MIDI list; unmapped in Mixxx: Shift + browse turn, Shift + LOAD deck 2.
+  extra=(('[Library]','PioneerDDJ400.waveformZoom','0xb6','0x64',set()),
+   ('[Tab]','library','0x96','0x7a',set())))}
 class Bridge:
  def __init__(self,xml,emit,clock=time.monotonic,model='DDJ-FLX6'):
-  profile=PROFILES[model];prefix=profile['prefix'];self.jog_scale=profile['jog_scale']
+  profile=PROFILES[model];prefix=profile['prefix'];self.jog_scale=profile['jog_scale'];self.zoom_sign=profile['zoom_sign']
   self.clock=clock;self.jogs={ch:dict(total=0,delta=0,last=clock(),moved=0,speed=0) for ch in (1,2)}
   self.emit=emit;self.mapping={};self.msb={};self.held=set();self.pad_held={};self.status=None;self.data=[]
   self.shift={1:False,2:False}
@@ -119,7 +126,7 @@ class Bridge:
    self.emit(key,op,ch,0,0.,0)
   elif mode=='waveform-zoom':
    # One zoom step per message; the DDJ-400 sends up to ±30 on a fast turn.
-   if value!=64 and value:self.emit(key,4,0,1 if value>64 else -1,0.,0x425a)
+   if value!=64 and value:self.emit(key,4,0,(1 if value>64 else -1)*self.zoom_sign,0.,0x425a)
   elif mode=='relative':
    delta=value if value<64 else value-128
    if delta:self.emit(key,4,ch,delta,0.,0x4252) # browser-only encoder intent
