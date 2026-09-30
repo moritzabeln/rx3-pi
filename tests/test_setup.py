@@ -142,6 +142,16 @@ class SetupTests(unittest.TestCase):
             ensure(c)
         self.assertFalse((self.root / 'map.xml').exists())
 
+    def test_controller_model_selects_pinned_mapping(self):
+        from rx3tool.mapping import MAPPINGS
+        self.assertTrue(config.load(self.conf, ['controller.model=DDJ-SX'], env={}).validate())
+        c = config.load(self.conf, ['controller.model=DDJ-400', 'controller.mapping=map.xml'], env={})
+        self.assertEqual(c.validate(), [])
+        with patch('rx3tool.mapping.urllib.request.urlopen', return_value=io.BytesIO(b'wrong')) as urlopen, \
+                self.assertRaisesRegex(Failure, 'DDJ-400 mapping checksum'):
+            ensure(c)
+        self.assertEqual(urlopen.call_args[0][0], MAPPINGS['DDJ-400'][0])
+
     def test_recovery_rejects_wrong_input_hash(self):
         p = self.root / 'input.zip'; p.write_bytes(b'bad')
         item = {'name': 'input.zip', 'size': 3, 'sha256': hashlib.sha256(b'yes').hexdigest()}

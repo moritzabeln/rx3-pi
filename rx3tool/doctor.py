@@ -373,7 +373,7 @@ class Doctor:
         else:
             present = ', '.join(cards) or 'none'
             self.fail(f'ALSA card {card} is not connected (present: {present})',
-                      'Connect and power on the DDJ-FLX6, or set [audio] card in rx3.conf.')
+                      'Connect and power on the controller, or set [audio] card in rx3.conf.')
         if card != 'DDJFLX6':
             self.warn(f'Audio card {card} is untested',
                       'The routing sends master to channels 1/2 and headphones to 3/4 at 44.1 kHz,\n'
@@ -420,15 +420,16 @@ class Doctor:
         if not mapping.is_file():
             self.fail(f'Controller mapping not found: {mapping}',
                       'Fetch the pinned mapping with ./rx3 mapping, or use your BiteDJ/Mixxx XML.\n'
-                      'Set [controller] mapping in rx3.conf to your Pioneer-DDJ-FLX6.midi.xml.')
+                      'Set [controller] mapping in rx3.conf to your controller\'s .midi.xml file.')
             return
         try:
             import importlib.util
+            model = self.config.get('controller', 'model')
             spec = importlib.util.spec_from_file_location('flx6_rx3', REPO / 'flx6-rx3.py')
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            bridge = module.Bridge(str(mapping), lambda *a: None)
-            self.ok(f'Controller mapping loads: {len(bridge.mapping)} bindings from {mapping}')
+            bridge = module.Bridge(str(mapping), lambda *a: None, model=model)
+            self.ok(f'Controller mapping loads ({model}): {len(bridge.mapping)} bindings from {mapping}')
         except Exception as error:  # a bad user file must not crash doctor
             self.fail(f'Controller mapping could not be read: {error}')
 

@@ -50,6 +50,7 @@ DEFAULTS = {
         'card': 'DDJFLX6',
     },
     'controller': {
+        'model': 'DDJ-FLX6',
         'midi_name': 'DDJ-FLX6',
         'mapping': 'work/Pioneer-DDJ-FLX6.midi.xml',
     },
@@ -179,6 +180,10 @@ class Config:
         name = self.get('controller', 'midi_name')
         if not name or not name.isprintable():
             problems.append('[controller] midi_name must be printable text')
+        from .mapping import MAPPINGS
+        model = self.get('controller', 'model')
+        if model not in MAPPINGS:
+            problems.append(f'[controller] model must be one of {", ".join(MAPPINGS)}, not {model!r}')
         check(lambda: self.path('controller', 'mapping'))
         uuid = self.get('usb', 'uuid')
         if uuid and not UUID.match(uuid):

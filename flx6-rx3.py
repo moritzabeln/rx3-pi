@@ -12,14 +12,29 @@ ANALOG={'pregain':0x5019,'parameter3':0x501a,'parameter2':0x501b,'parameter1':0x
  'volume':0x501e,'super1':0x509d,'crossfader':0x6017,'headMix':0x4405}
 PAD_BANKS={"pad-hotcue":0,"pad-beatloop":1,"pad-beatjump":3}
 LOOP_SIZES=("0.25","0.5","1","2","4","8","16","32")
+# jog_scale converts platter ticks to the FLX6's 7200 ticks per revolution.
+PROFILES={
+ 'DDJ-FLX6':dict(prefix='PioneerDDJFLX6.',jog_scale=1,aliases={},extra=()),
+ # Mixxx's Pioneer-DDJ-400 mapping; 720 ticks/revolution as in its scratchEnable().
+ 'DDJ-400':dict(prefix='PioneerDDJ400.',jog_scale=10,
+  aliases={'PioneerDDJ400.syncPressed':'sync_enabled','PioneerDDJ400.syncLongPressed':'sync_leader',
+   'MoveVertical':'PioneerDDJ400.browseRotate','MoveFocusBackward':'PioneerDDJ400.backPressed'},
+  # Shift + browse turn (official MIDI list); Mixxx leaves it unmapped.
+  extra=(('[Library]','PioneerDDJ400.waveformZoom','0xb6','0x64',set()),))}
 class Bridge:
- def __init__(self,xml,emit,clock=time.monotonic):
+ def __init__(self,xml,emit,clock=time.monotonic,model='DDJ-FLX6'):
+  profile=PROFILES[model];prefix=profile['prefix'];self.jog_scale=profile['jog_scale']
   self.clock=clock;self.jogs={ch:dict(total=0,delta=0,last=clock(),moved=0,speed=0) for ch in (1,2)}
   self.emit=emit;self.mapping={};self.msb={};self.held=set();self.pad_held={};self.status=None;self.data=[]
   self.shift={1:False,2:False}
   self.grid_ticks={1:0,2:0}
-  for c in ET.parse(xml).findall('.//controls/control'):
-   g=c.findtext('group','');key=c.findtext('key','');match=re.search(r'\[Channel(\d)\]',g)
+  controls=[(c.findtext('group',''),c.findtext('key',''),c.findtext('status'),c.findtext('midino'),
+   {o.tag for o in c.findall('./options/*')}) for c in ET.parse(xml).findall('.//controls/control')]
+  for g,key,status,midino,opts in controls+list(profile['extra']):
+   key=profile['aliases'].get(key,key)
+   # Script names below use the FLX6 spelling.
+   if key.startswith(prefix):key='PioneerDDJFLX6.'+key[len(prefix):]
+   match=re.search(r'\[Channel(\d)\]',g)
    if match:
     channel=int(match[1])
     if channel>2:continue
@@ -35,7 +50,7 @@ class Bridge:
    if key in ANALOG:native=ANALOG[key];mode='analog'
    if key=='PioneerDDJFLX6.jogTurn':native=0x4305;mode='jog'
    if key=='PioneerDDJFLX6.jogSearch':native=0;mode='grid-jog'
-   if key=='PioneerDDJFLX6.jogTouch' and int(c.findtext('midino'),0)==0x36:native=0x4306
+   if key=='PioneerDDJFLX6.jogTouch' and int(midino,0)==0x36:native=0x4306
    if key=='PioneerDDJFLX6.tempoSliderMSB':native=0x4109;mode='tempo-msb'
    if key=='PioneerDDJFLX6.tempoSliderLSB':native=0x4109;mode='tempo-lsb'
    if key=='PioneerDDJFLX6.browseRotate':native=0x420c;mode='relative'
@@ -43,15 +58,14 @@ class Bridge:
    pad=re.fullmatch(r'hotcue_([1-8])_activate',key)
    if pad:native=0x4116+int(pad[1]);mode="pad-hotcue"
    if key=="PioneerDDJFLX6.beatjumpPadPressed":
-    note=int(c.findtext("midino"),0)
+    note=int(midino,0)
     if 0x20<=note<=0x27:native=0x4117+note-0x20;mode="pad-beatjump"
    loop=re.fullmatch(r'beatloop_(0\.25|0\.5|1|2|4|8|16|32)_toggle',key)
    if loop:native=0x4117+LOOP_SIZES.index(loop[1]);mode="pad-beatloop"
    if native is None:continue
-   opts={o.tag for o in c.findall('./options/*')}
    if 'fourteen-bit-msb' in opts:mode='msb'
    if 'fourteen-bit-lsb' in opts:mode='lsb'
-   addr=(int(c.findtext('status'),0),int(c.findtext('midino'),0))
+   addr=(int(status,0),int(midino,0))
    item=(native,channel,mode)
    if addr in self.mapping and self.mapping[addr]!=item:raise ValueError(f'Conflicting mapping {addr}')
    self.mapping[addr]=item
@@ -80,7 +94,7 @@ class Bridge:
   elif mode=='grid-jog':self.grid_jog(ch,value)
   elif mode=='jog':
    if self.shift[ch]:self.grid_jog(ch,value);return
-   j=self.jogs[ch];delta=value-64
+   j=self.jogs[ch];delta=(value-64)*self.jog_scale
    if delta:j['delta']+=delta;j['total']+=delta;j['moved']=self.clock()
   elif mode in PAD_BANKS:
    bank=PAD_BANKS[mode];identity=(key,ch)
@@ -104,7 +118,8 @@ class Bridge:
    else:self.held.discard((key,ch))
    self.emit(key,op,ch,0,0.,0)
   elif mode=='waveform-zoom':
-   if value in (1,127):self.emit(key,4,0,1 if value==127 else -1,0.,0x425a)
+   # One zoom step per message; the DDJ-400 sends up to ±30 on a fast turn.
+   if value!=64 and value:self.emit(key,4,0,1 if value>64 else -1,0.,0x425a)
   elif mode=='relative':
    delta=value if value<64 else value-128
    if delta:self.emit(key,4,ch,delta,0.,0x4252) # browser-only encoder intent
@@ -128,7 +143,7 @@ class Bridge:
      if n==2:self.message(self.status,*self.data)
      self.data=[]
  def grid_jog(self,ch,value):
-  total=self.grid_ticks[ch]+value-64
+  total=self.grid_ticks[ch]+(value-64)*self.jog_scale
   steps=abs(total)//16*(1 if total>=0 else -1)
   self.grid_ticks[ch]=total-steps*16
   # BiteDJ: 5 ms per step. RX3 offset units are quarter milliseconds.
@@ -164,11 +179,11 @@ def listen_reconnecting(b,lib,running,discover,sleep=time.sleep):
   handle=ctypes.c_void_p()
   try:
    devices=discover()
-   if len(devices)!=1:raise OSError(errno.ENODEV,'Expected one FLX6 MIDI input')
+   if len(devices)!=1:raise OSError(errno.ENODEV,'Expected one controller MIDI input')
    rc=lib.snd_rawmidi_open(ctypes.byref(handle),None,devices[0].encode(),2)
-   if rc<0:raise OSError(-rc,'Cannot open FLX6 MIDI input')
+   if rc<0:raise OSError(-rc,'Cannot open controller MIDI input')
   except (OSError,subprocess.SubprocessError) as e:
-   if not waiting:print(f'Waiting for FLX6 MIDI: {e}',flush=True)
+   if not waiting:print(f'Waiting for controller MIDI: {e}',flush=True)
    waiting=True
    for _ in range(20):
     if not running():break
@@ -182,7 +197,7 @@ def listen_reconnecting(b,lib,running,discover,sleep=time.sleep):
     if n>0:b.feed(buf.raw[:n])
     elif n in (0,-errno.EAGAIN):sleep(.005)
     elif n!=-errno.EINTR:
-     print(f'FLX6 MIDI read failed ({n}); reconnecting',flush=True)
+     print(f'Controller MIDI read failed ({n}); reconnecting',flush=True)
      break
     b.tick()
   finally:
@@ -203,16 +218,17 @@ def main():
  p.add_argument('--player-id',help='launcher identity for this player session')
  p.add_argument('--state',help='jog counter file kept across bridge restarts')
  p.add_argument('--port-name',default='DDJ-FLX6',help='MIDI port name shown by amidi -l')
+ p.add_argument('--model',choices=sorted(PROFILES),default='DDJ-FLX6',help='controller the mapping XML is for')
  p.add_argument('--replay');p.add_argument('--dry-run',action='store_true')
  p.add_argument('--check-mapping',action='store_true',help='only load the mapping and report the binding count');a=p.parse_args()
  if a.check_mapping:
-  print(f'Loaded {len(Bridge(a.mapping,lambda *c:None).mapping)} MIDI bindings from {a.mapping}');return
+  print(f'Loaded {len(Bridge(a.mapping,lambda *c:None,model=a.model).mapping)} MIDI bindings from {a.mapping}');return
  if not a.dry_run and not a.fifo:p.error('--fifo is required (or set RX3_RUNTIME)')
  fd=None if a.dry_run else os.open(a.fifo,os.O_RDWR|os.O_NONBLOCK)
  def emit(*cmd):
   if fd is not None:os.write(fd,struct.pack('<iiiifi',*cmd))
   if a.replay or a.dry_run:print(cmd,flush=True)
- b=Bridge(a.mapping,emit);print(f'Loaded {len(b.mapping)} MIDI bindings from {a.mapping}',flush=True)
+ b=Bridge(a.mapping,emit,model=a.model);print(f'Loaded {len(b.mapping)} MIDI bindings from {a.mapping}',flush=True)
  if a.replay:
   b.feed(open(a.replay,'rb').read());b.release();return
  # Preserve absolute jog counters across MIDI-reader restarts in this player session.

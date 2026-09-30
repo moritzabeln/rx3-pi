@@ -338,7 +338,7 @@ class Launcher:
         mapping = self.config.path('controller', 'mapping')
         if not mapping.is_file():
             raise Failure(f'Controller mapping not found: {mapping}',
-                          'Set [controller] mapping in rx3.conf to your Pioneer-DDJ-FLX6.midi.xml')
+                          'Set [controller] mapping in rx3.conf to your controller\'s .midi.xml file')
         return drm, how, touch, touch_how, mapping
 
     def start(self):
@@ -375,6 +375,7 @@ class Launcher:
                                     '--fifo', self.rt('dev/rx3-control'),
                                     '--state', self.state / 'midi-jog-state.json',
                                     '--port-name', self.config.get('controller', 'midi_name'),
+                                    '--model', self.config.get('controller', 'model'),
                                     '--player-id', ('dry-run' if self.dry_run else str(player_process.pid)
                                                     if new_player else str(running['player'][0]))], env)
             if self.dry_run:

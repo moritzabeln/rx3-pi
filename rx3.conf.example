@@ -46,14 +46,22 @@ device = auto
 
 [audio]
 # ALSA card ID (see: cat /proc/asound/cards). DDJFLX6 is the tested one.
+# DDJ-400: card = DDJ400 (untested)
 card = DDJFLX6
 
 [controller]
+# DDJ-FLX6 (tested) or DDJ-400 (untested). It selects the mapping format.
+model = DDJ-FLX6
 # MIDI port name as shown by: amidi -l
 midi_name = DDJ-FLX6
-# ./rx3 mapping fetches a pinned public BiteDJ XML if this file is missing.
-# Or point at your own existing BiteDJ mapping. Existing files are preserved.
+# ./rx3 mapping fetches a pinned public XML for the model if this file is missing:
+# BiteDJ's for the DDJ-FLX6, Mixxx's for the DDJ-400.
+# Or point at your own existing mapping. Existing files are preserved.
 mapping = work/Pioneer-DDJ-FLX6.midi.xml
+# DDJ-400 example:
+# model = DDJ-400
+# midi_name = DDJ-400
+# mapping = work/Pioneer-DDJ-400.midi.xml
 
 [usb]
 # Filesystem UUID of your rekordbox USB (FAT32), shown by:

@@ -48,7 +48,7 @@ def selftest(verbose=False):
     failures = 0 if result.wasSuccessful() else 1
     stage('Existing replay tests')
     for name in ('test-navigation.py', 'test-pad-mapping.py', 'test-held-pads.py', 'test-shift-jog.py',
-                 'test-grid-jog.py', 'test-midi-reconnect.py', 'test-touch-recovery.py'):
+                 'test-grid-jog.py', 'test-midi-reconnect.py', 'test-touch-recovery.py', 'test-ddj400-mapping.py'):
         code = subprocess.run([sys.executable, str(REPO / name)], cwd=str(REPO),
                               capture_output=not verbose).returncode
         say(f'  {"pass" if code == 0 else "FAIL"}  {name}')
@@ -105,7 +105,7 @@ def main(argv=None):
     assemble = command('assemble', 'create or repair the RX3 runtime directory from the recovered images')
     assemble.add_argument('--repair', action='store_true', help='rewrite every firmware file')
     assemble.add_argument('--dry-run', action='store_true')
-    m = command('mapping', 'fetch the pinned public FLX6 mapping, or check your configured XML')
+    m = command('mapping', 'fetch the pinned public mapping for [controller] model, or check your configured XML')
     m.add_argument('--offline', action='store_true')
     m.add_argument('--dry-run', action='store_true')
     b = command('build', 'build the display/touch helpers and the 32-bit player shim')
