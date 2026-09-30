@@ -414,7 +414,7 @@ class Doctor:
         self.mapping_check()
         self.usb_check()
         for tool, package in (('sudo', 'sudo'), ('chroot', 'coreutils'), ('findmnt', 'util-linux'),
-                              ('lsblk', 'util-linux'), ('mount', 'mount')):
+                              ('lsblk', 'util-linux'), ('prlimit', 'util-linux'), ('mount', 'mount')):
             if not shutil.which(tool):
                 self.fail(f'{tool} is missing', f'Install: sudo apt install {package}', package)
         if shutil.which('sudo'):

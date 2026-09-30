@@ -128,6 +128,15 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(system.player_pids(self.cfg.runtime), [123])
             self.assertEqual(system.player_pids(self.root / 'other'), [])
 
+    def test_player_gets_realtime_limit_and_is_recognised(self):
+        with patch.object(self.cfg, 'uid', return_value=1000), patch.object(self.cfg, 'gid', return_value=1000), \
+                patch.object(self.cfg, 'groups', return_value=[]):
+            argv = ['sudo', '-n', '--'] + Launcher(self.cfg).player_command()
+        self.assertEqual(argv[3:6], ['prlimit', '--rtprio=99', '--'])
+        with patch('rx3tool.system.processes', return_value=[(123, 1000, [str(a) for a in argv], 'sudo')]):
+            self.assertEqual(system.player_pids(self.cfg.runtime), [123])
+            self.assertEqual(system.player_pids(self.root / 'other'), [])
+
     def test_changed_usb_preserves_local_library(self):
         (self.cfg.runtime / USB1).mkdir(parents=True)
         dst = self.cfg.runtime / USB2; dst.mkdir(parents=True)

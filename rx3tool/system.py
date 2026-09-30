@@ -85,7 +85,7 @@ def player_pids(runtime):
     result = []
     for pid, _, argv, comm in processes():
         # sudo stays as the launcher/monitor and forwards TERM to its child.
-        if argv[:4] == ['sudo', '-n', '--', 'chroot'] and root in argv[4:]:
+        if argv[:3] == ['sudo', '-n', '--'] and 'chroot' in argv[3:8] and root in argv[4:]:
             result.append(pid)
             continue
         if comm != 'rbp-pi':

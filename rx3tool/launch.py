@@ -306,7 +306,9 @@ class Launcher:
     def player_command(self):
         uid, gid = self.config.uid(), self.config.gid()
         groups = ','.join(str(g) for g in self.config.groups())
-        command = ['chroot', f'--userspec={uid}:{gid}']
+        # The player creates every task as a SCHED_FIFO/RR thread; without an rtprio limit
+        # pthread_create fails and it loops on CmnFunc_Error. The limit survives chroot's setuid.
+        command = ['prlimit', '--rtprio=99', '--', 'chroot', f'--userspec={uid}:{gid}']
         if groups:
             command.append(f'--groups={groups}')
         return command + [str(self.runtime), '/bin/busybox', 'env', 'LD_PRELOAD=/lib/fbshim.so',
