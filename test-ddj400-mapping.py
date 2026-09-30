@@ -69,14 +69,16 @@ class Leds(unittest.TestCase):
   self.b=m.Bridge(self.f.name,lambda *e:None,model='DDJ-400')
  def tearDown(self):self.f.close()
  def frame(self,**lit):
-  states=bytearray(192)
-  for name,value in lit.items():ch,led=name[1:].split('_');states[int(ch)*64+int(led)]=value
+  states=bytearray(195)
+  for name,value in lit.items():
+   if name.startswith('meter'):states[192+int(name[5:])]=value;continue
+   ch,led=name[1:].split('_');states[int(ch)*64+int(led)]=value
   return self.b.led_frame(bytes(states))
  @staticmethod
  def messages(data):return {(data[i],data[i+1],data[i+2]) for i in range(0,len(data),3)}
  def test_first_frame_sets_every_led_then_only_changes(self):
-  # 13 deck notes x 2 decks, 3 pad modes x 8 pads x 2 layers x 2 decks, master cue.
-  self.assertEqual(len(self.frame())//3,26+96+1)
+  # 13 deck notes x 2 decks, 3 pad modes x 8 pads x 2 layers x 2 decks, master cue, 2 meters.
+  self.assertEqual(len(self.frame())//3,26+96+1+2)
   self.assertEqual(self.frame(),b'')
   self.assertEqual(self.messages(self.frame(c1_1=3)),{(0x90,0x0b,0x7f),(0x90,0x47,0x7f)})
   self.assertEqual(self.messages(self.frame(c1_1=3,c0_51=3)),{(0x96,0x63,0x7f)})
@@ -89,24 +91,34 @@ class Leds(unittest.TestCase):
    {(0x99,0x00,0),(0x9a,0x00,0),(0x99,0x20,0x7f),(0x9a,0x20,0x7f)})
   # A blinking mode LED still selects the bank.
   self.assertEqual(self.frame(c2_17=2,c2_18=3),b'')
+ def test_dim_pads_are_off(self):
+  self.frame()
+  # Empty hot cues are on but dim on the RX3; set cues are at full brightness.
+  self.assertEqual(self.frame(c1_14=3,c1_18=7,c1_19=7),b'')
+  self.assertEqual(self.messages(self.frame(c1_14=3,c1_18=3,c1_19=7)),{(0x97,0x00,0x7f),(0x98,0x00,0x7f)})
+ def test_channel_level_meters(self):
+  self.frame()
+  self.assertEqual(self.messages(self.frame(meter1=11,meter2=3)),{(0xb0,0x02,127),(0xb1,0x02,35)})
+  self.assertEqual(self.messages(self.frame(meter1=11)),{(0xb1,0x02,0)})
+  self.assertIn((0xb0,0x02,0),self.messages(self.b.led_off()))
  def test_off_and_reset(self):
   self.frame(c1_2=3)
   self.assertEqual(self.messages(self.b.led_off()),{(0x90,0x0c,0),(0x90,0x48,0)})
-  self.assertEqual(len(self.frame())//3,123)
+  self.assertEqual(len(self.frame())//3,125)
  def test_flx6_has_no_led_output(self):
-  b=m.Bridge(self.f.name,lambda *e:None);self.assertIsNone(b.leds);self.assertEqual(b.led_frame(bytes(192)),b'')
+  b=m.Bridge(self.f.name,lambda *e:None);self.assertIsNone(b.leds);self.assertEqual(b.led_frame(bytes(195)),b'')
  def test_state_file_reader(self):
   import struct
   with tempfile.TemporaryDirectory() as d:
-   path=pathlib.Path(d)/'rx3-led-state';r=m.LedState(str(path))
+   path=pathlib.Path(d)/'rx3-led-state';r=m.LedState(str(path));data=bytes(range(195))
    self.assertIsNone(r.poll(0.))
-   path.write_bytes(struct.pack('<II',m.LedState.MAGIC,1)+bytes(range(192)))
+   path.write_bytes(struct.pack('<II',m.LedState.MAGIC,1)+data)
    self.assertIsNone(r.poll(.5))                      # retry waits a second
-   self.assertEqual(r.poll(1.),bytes(range(192)))
+   self.assertEqual(r.poll(1.),data)
    self.assertIsNone(r.poll(1.))                      # unchanged sequence
-   r.reset();self.assertEqual(r.poll(1.),bytes(range(192)))
+   r.reset();self.assertEqual(r.poll(1.),data)
    with open(path,'r+b') as f:f.seek(4);f.write(struct.pack('<I',2))
-   self.assertEqual(r.poll(1.),bytes(range(192)));r.close()
+   self.assertEqual(r.poll(1.),data);r.close()
  def test_reconnect_loop_writes_leds_and_turns_them_off(self):
   import ctypes,errno
   class Source:

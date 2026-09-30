@@ -8,16 +8,19 @@
 #include <unistd.h>
 #include "led-state.h"
 extern char *program_invocation_short_name;
-#define MAGIC 0x4c335852u /* "RX3L": u32 magic, u32 sequence, u8 state[3][64] */
+#define MAGIC 0x4c335852u /* "RX3L": u32 magic, u32 sequence, u8 state[3][64], u8 level[3] */
 #define IDS 64
-static uint8_t *shared,last[3*IDS];
+#define SIZE (3*IDS+3)
+static uint8_t *shared,last[SIZE];
 static int announced;
 static void (*original_send)(void*,const void*);
 static void send_hook(void *self,const void *ledstat){
  long long now=((long long(*)(void))0x3a127c)(); /* juce::Time::currentTimeMillis */
- uint8_t current[3*IDS]={0};
- for(uint32_t ch=0;ch<3;ch++)for(uint32_t id=1;id<=RX3_LED_MAX;id++)
-  current[ch*IDS+id]=rx3_led_value(ledstat,id,ch,now);
+ uint8_t current[SIZE]={0};
+ for(uint32_t ch=0;ch<3;ch++){
+  for(uint32_t id=1;id<=RX3_LED_MAX;id++)current[ch*IDS+id]=rx3_led_value(ledstat,id,ch,now);
+  current[3*IDS+ch]=rx3_led_level(ledstat,ch);
+ }
  if(memcmp(current,last,sizeof(current))){
   memcpy(last,current,sizeof(current));memcpy(shared+8,current,sizeof(current));
   __atomic_add_fetch((uint32_t*)shared+1,1,__ATOMIC_RELEASE);
@@ -35,7 +38,7 @@ __attribute__((constructor))static void install_led_publisher(void){
  shared=mmap(0,4096,PROT_READ|PROT_WRITE,MAP_SHARED,out,0);
  close(out);
  if(shared==MAP_FAILED){shared=0;return;}
- memset(shared+8,0,3*IDS);
+ memset(shared+8,0,SIZE);
  __atomic_store_n((uint32_t*)shared,MAGIC,__ATOMIC_RELEASE);
  long page=getpagesize();uint32_t *tr=mmap(0,page,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
  if(tr==MAP_FAILED)return;

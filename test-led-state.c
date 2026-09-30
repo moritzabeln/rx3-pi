@@ -24,7 +24,12 @@ int main(void){
  put32(RECORDS+44*3+8,1);put32(RECORDS+44*3+12,2);
  led(7,1,3,0,0);                 /* deck1 LoopIn: follows steady deck1 Play, so dark */
  put32(RECORDS+44*4+8,1);put32(RECORDS+44*4+12,1);
+ led(18,1,1,0,0);put32(RECORDS+44*5+20,1);     /* deck1 Pad1: empty hot cue, on but dim */
+ led(54,1,1,0,0);put32(RECORDS+44*6+36,0x87);  /* deck1 meter: 3-segment bar + peak bit */
  const uint8_t *ls=arena;
+ assert(rx3_led_value(ls,18,1,0)==(RX3_LED_ACTIVE|RX3_LED_LIT|RX3_LED_DIM));
+ assert(rx3_led_level(ls,1)==3);
+ assert(rx3_led_level(ls,2)==0);
  assert(rx3_led_value(ls,1,1,0)==(RX3_LED_ACTIVE|RX3_LED_LIT));
  assert(rx3_led_value(ls,1,0,0)==(RX3_LED_ACTIVE|RX3_LED_LIT));
  assert(rx3_led_value(ls,1,2,1200)==(RX3_LED_ACTIVE|RX3_LED_LIT));
@@ -38,5 +43,5 @@ int main(void){
  assert(rx3_led_value(ls,1,3,0)==0);             /* channel beyond stride */
  assert(rx3_led_value(ls,RX3_LED_MAX+1,1,0)==0);
  put16(4,2);assert(rx3_led_value(ls,4,2,2100)==0); /* index beyond record count */
- puts("PASS LedStat on/off/blink/follow decoding and bounds");
+ puts("PASS LedStat on/off/blink/follow/dim/meter decoding and bounds");
 }

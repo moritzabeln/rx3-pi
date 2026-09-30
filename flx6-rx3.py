@@ -32,7 +32,7 @@ PROFILES={
   # RX3 panel LED id -> DDJ-400 LED notes (official MIDI list); the Shift layer mirrors them.
   leds=dict(deck={1:(0x0b,0x47),2:(0x0c,0x48),4:(0x58,),7:(0x10,0x4c),8:(0x11,0x4e),9:(0x4d,0x50),50:(0x54,0x68)},
    # Active RX3 pad mode (HotCue, AutoBeatLoop, BeatJump LED) -> DDJ-400 pad note base.
-   banks={14:0x00,15:0x60,17:0x20},pads=(0x97,0x99),common={51:(0x96,0x63)}))}
+   banks={14:0x00,15:0x60,17:0x20},pads=(0x97,0x99),common={51:(0x96,0x63)},meter=0x02))}
 class Bridge:
  def __init__(self,xml,emit,clock=time.monotonic,model='DDJ-FLX6'):
   profile=PROFILES[model];prefix=profile['prefix'];self.jog_scale=profile['jog_scale'];self.zoom_sign=profile['zoom_sign']
@@ -185,26 +185,30 @@ class Bridge:
   self.held.clear();self.pad_held.clear()
   for ch in self.shift:self.shift[ch]=False;self.grid_ticks[ch]=0
  def led_frame(self,states):
-  """MIDI that brings the controller LEDs to states[channel*64+id] (bit0 lit, bit1 active)."""
+  """MIDI that brings the controller LEDs to states[channel*64+id] (bit0 lit, bit1 active,
+  bit2 dim) and the channel meters to states[192+channel] (lit RX3 segments, 0-11)."""
   if not self.leds:return b''
   leds=self.leds;want={}
+  # The DDJ-400 cannot dim; the RX3 dims e.g. pads without a hot cue.
+  def on(v):return 0x7f if v&5==1 else 0
   for ch in (1,2):
    row=states[ch*64:ch*64+64];status=0x8f+ch;pad=leds['pads'][ch-1]
    for led,notes in leds['deck'].items():
-    for note in notes:want[(status,note)]=row[led]&1
+    for note in notes:want[(status,note)]=on(row[led])
    bank=next((base for led,base in leds['banks'].items() if row[led]&2),None)
    # RX3 pads 1-8 are LEDs 18-25; only the active mode's notes show them.
    for base in leds['banks'].values():
-    for i in range(8):want[(pad,base+i)]=want[(pad+1,base+i)]=row[18+i]&1 if base==bank else 0
-  for led,key in leds['common'].items():want[key]=states[led]&1
+    for i in range(8):want[(pad,base+i)]=want[(pad+1,base+i)]=on(row[18+i]) if base==bank else 0
+   if len(states)>192+ch:want[(0xaf+ch,leds['meter'])]=min(127,round(states[192+ch]*127/11))
+  for led,key in leds['common'].items():want[key]=on(states[led])
   out=bytearray()
-  for (status,note),lit in want.items():
-   if self.led_sent.get((status,note))!=lit:
-    self.led_sent[(status,note)]=lit;out+=bytes((status,note,0x7f if lit else 0))
+  for (status,note),value in want.items():
+   if self.led_sent.get((status,note))!=value:
+    self.led_sent[(status,note)]=value;out+=bytes((status,note,value))
   return bytes(out)
  def led_reset(self):self.led_sent.clear()
  def led_off(self):
-  out=bytes(v for (status,note),lit in self.led_sent.items() if lit for v in (status,note,0))
+  out=bytes(v for (status,note),value in self.led_sent.items() if value for v in (status,note,0))
   self.led_sent.clear();return out
 class LedState:
  """Poll the panel LED states published by the player shim (led-publish.c)."""
@@ -218,8 +222,8 @@ class LedState:
    except OSError:self.retry=now+1;return None
   magic,seq=struct.unpack('<II',os.pread(self.fd,8,0).ljust(8,b'\0'))
   if magic!=self.MAGIC or seq==self.seq:return None
-  states=os.pread(self.fd,192,8)
-  if len(states)<192:return None
+  states=os.pread(self.fd,195,8)
+  if len(states)<195:return None
   self.seq=seq;return states
  def close(self):
   if self.fd is not None:os.close(self.fd);self.fd=None
