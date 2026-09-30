@@ -165,6 +165,12 @@ class Doctor:
                   '32-bit ARM compiler for the player shim')
         self.tool('arm-linux-gnueabi-as', 'binutils-arm-linux-gnueabi', 'assembles the ARM clock stub')
         self.tool('arm-linux-gnueabi-objcopy', 'binutils-arm-linux-gnueabi', 'extracts the clock stub')
+        # The ARM32 shim compiles against the host's ALSA headers (-idirafter /usr/include).
+        if Path('/usr/include/alsa/asoundlib.h').is_file():
+            self.ok('ALSA development files (alsa/asoundlib.h for the player shim)')
+        else:
+            self.fail('ALSA development files are missing (alsa/asoundlib.h for the player shim)',
+                      'Install: sudo apt install libasound2-dev', 'libasound2-dev')
         if shutil.which('arm-linux-gnueabi-gcc'):
             self.arm_compile_check()
 

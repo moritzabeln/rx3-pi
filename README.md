@@ -24,7 +24,7 @@ Run as your normal account, **not `sudo ./rx3`**. Install the prerequisites:
 sudo apt update
 sudo apt install git python3 python3-cryptography build-essential pkg-config \
   libdrm-dev libfreetype-dev gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
-  libc6-dev-armel-cross linux-libc-dev unzip libarchive-tools \
+  libc6-dev-armel-cross linux-libc-dev libasound2-dev unzip libarchive-tools \
   alsa-utils libasound2 fonts-dejavu-core sudo util-linux mount
 ```
 

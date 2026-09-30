@@ -19,6 +19,10 @@ command -v "$compiler" >/dev/null 2>&1 || {
  echo "Missing ARM32 compiler: $compiler. On Debian: sudo apt install gcc-arm-linux-gnueabi" >&2
  exit 1
 }
+test -f /usr/include/alsa/asoundlib.h || {
+ echo "Missing ALSA development files (alsa/asoundlib.h). On Debian: sudo apt install libasound2-dev" >&2
+ exit 1
+}
 test -f "$rootfs/usr/lib/libasound.so.2" || {
  echo "Missing assembled RX3 runtime: $rootfs/usr/lib/libasound.so.2" >&2
  echo "Create it with ./rx3 recover and ./rx3 assemble (see README.md)." >&2
