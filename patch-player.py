@@ -35,6 +35,9 @@ def patched(original, clock):
     words(0x28ac8, 0xe12fff1e)
     # Select the existing audio profile; PCM devices are redirected by fbshim.
     words(0x3c6654, 0xe3a00001)
+    # getPcController(): return NULL until UiObjectManager::init() has set the panel table.
+    # NetworkMonitor's 1 s timer calls it before the UI exists on slow starts; it handles NULL.
+    words(0x31df64, 0xe59f3030, 0xe5930110, 0xe3500000, 0x1590009c, 0xe12fff1e)
     return bytes(p)
 
 
