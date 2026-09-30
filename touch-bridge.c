@@ -37,6 +37,10 @@ int main(int argc,char**argv){
  if(argc<3)return 2;
  int fullscreen=0,exclusive=0;
  for(int i=3;i<argc;i++){if(!strcmp(argv[i],"--fullscreen"))fullscreen=1;else if(!strcmp(argv[i],"--exclusive"))exclusive=1;else return 2;}
+ const char *panel=getenv("RX3_PANEL");if(!panel||!*panel)panel="touch2-portrait";
+ int hdmi=!strcmp(panel,"hdmi-1024x600");
+ if(!hdmi&&strcmp(panel,"touch2-portrait")){fprintf(stderr,"Unknown RX3_PANEL %s\n",panel);return 2;}
+ if(hdmi&&!fullscreen){fprintf(stderr,"RX3_PANEL=hdmi-1024x600 supports only --fullscreen\n");return 2;}
  int replay=!strcmp(argv[1],"--replay");int in=-1,out=open(argv[2],O_RDWR|O_NONBLOCK);control=open(ui_control_path(),O_RDWR|O_NONBLOCK);
  if(out<0||control<0){perror("open");return 1;}
  int sf=open(ui_state_path(),O_RDWR|O_CREAT,0600);if(sf<0||ftruncate(sf,sizeof(struct ui_state)))return 1;
@@ -47,7 +51,7 @@ int main(int argc,char**argv){
  while(running){
  in=replay?0:open(argv[1],O_RDONLY|O_NONBLOCK);
  if(in<0){if(!waiting)perror("waiting for touch device");waiting=1;retry_pause();continue;}
- struct input_absinfo ax={.maximum=1199},ay={.maximum=1919};
+ struct input_absinfo ax={.maximum=hdmi?1023:1199},ay={.maximum=hdmi?599:1919};
  if(!replay&&(ioctl(in,EVIOCGABS(ABS_MT_POSITION_X),&ax)||ioctl(in,EVIOCGABS(ABS_MT_POSITION_Y),&ay))){if(!waiting)perror("touch ranges");waiting=1;close(in);retry_pause();continue;}
  if(exclusive&&!replay&&ioctl(in,EVIOCGRAB,1)){if(!waiting)perror("exclusive touch input");waiting=1;close(in);retry_pause();continue;}
  waiting=0;fprintf(stderr,"touch input connected: %s\n",argv[1]);
@@ -66,10 +70,16 @@ int main(int argc,char**argv){
  }
  long now=millis();
  for(int i=0;i<10;i++){
-  struct finger*f=&fingers[i];int lx=(f->y-ay.minimum)*1920/(ay.maximum-ay.minimum+1),ly=1199-(f->x-ax.minimum)*1200/(ax.maximum-ax.minimum+1);
+  struct finger*f=&fingers[i];int lx,ly,bar=0;
+  if(hdmi){
+   /* Landscape 1024x600 in the portrait panel's 1920x1200 units: 960 image pixels -> 1920. */
+   lx=(f->x-ax.minimum)*2048/(ax.maximum-ax.minimum+1)-64;ly=(f->y-ay.minimum)*1200/(ay.maximum-ay.minimum+1);
+   bar=lx<0||lx>1919;
+  }else{lx=(f->y-ay.minimum)*1920/(ay.maximum-ay.minimum+1);ly=1199-(f->x-ax.minimum)*1200/(ax.maximum-ax.minimum+1);}
   if(lx<0)lx=0;if(lx>1919)lx=1919;if(ly<0)ly=0;if(ly>1199)ly=1199;
   if(f->down&&!f->active){f->active=1;f->region=-1;
-   if(fullscreen){if(source<0){source=i;f->region=0;}}
+   if(bar){/* started on a black bar: ignored */}
+   else if(fullscreen){if(source<0){source=i;f->region=0;}}
    else if(ly>=1000){f->region=1+(ly-1000)/100*6+lx/320;button(f->region-1,1);f->next_repeat=now+400;}
    else if(lx<160||lx>=1760){int si=(lx<160?0:3)+ly/333;if(si>5)si=5;
     if((si==0||si==3)&&ly%333>=40&&ly%333<80){int ch=si==0?1:2;command(0x5020,0,ch,0,0);command(0x5020,2,ch,0,0);state->headphone_cue^=ch==1?1:2;}

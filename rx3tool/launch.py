@@ -361,7 +361,8 @@ class Launcher:
             else:
                 ok(f"Player already running (process {running['player'][0]})")
             env = {'RX3_RUNTIME': str(self.runtime), 'RX3_DRM_DEVICE': drm,
-                   'RX3_FB_DEVICE': self.config.get('display', 'fb_device')}
+                   'RX3_FB_DEVICE': self.config.get('display', 'fb_device'),
+                   'RX3_PANEL': self.config.get('display', 'panel')}
             if not running['display']:
                 info(f'Display: {drm} ({drm_how})')
                 self.spawn('display', [self.build / 'rx3-fb-present', self.rt('dev/fb0'),

@@ -21,7 +21,8 @@ NEWER_FIRMWARE_NOTE = (
     'but it is not supported here: the player patches and the compatibility shim use fixed code '
     'addresses verified only for 1.19. Nothing is installed on any DJ hardware: the 1.19 player '
     'only runs inside the Pi runtime, so no XDJ-RX3 or firmware update is involved.')
-PANEL = (1200, 1920)
+# [display] panel -> DRM mode / framebuffer size (width, height)
+PANELS = {'touch2-portrait': (1200, 1920), 'hdmi-1024x600': (1024, 600)}
 
 DEFAULTS = {
     'paths': {
@@ -40,6 +41,7 @@ DEFAULTS = {
         'groups': 'auto',
     },
     'display': {
+        'panel': 'touch2-portrait',
         'drm_device': 'auto',
         'fb_device': '/dev/fb0',
     },
@@ -121,6 +123,13 @@ class Config:
     def firmware_dir(self):
         return self.work / 'firmware'
 
+    @property
+    def panel_size(self):
+        panel = self.get('display', 'panel')
+        if panel not in PANELS:
+            raise Failure(f'[display] panel must be one of {", ".join(PANELS)}, not {panel!r}')
+        return PANELS[panel]
+
     # -- validation -------------------------------------------------------
     def validate(self):
         """Check syntax and unsupported combinations; never touches devices."""
@@ -170,6 +179,7 @@ class Config:
             value = self.get('display', key)
             if value != 'auto' and not value.startswith(prefix):
                 problems.append(f'[display] {key} must be auto or a path starting with {prefix}')
+        check(lambda: self.panel_size)
         touch = self.get('touch', 'device')
         if touch != 'auto' and not touch.startswith('/dev/input/'):
             problems.append('[touch] device must be auto or a path under /dev/input/')
@@ -235,18 +245,20 @@ class Config:
         value = self.get('display', 'drm_device')
         if value != 'auto':
             return value, 'configured'
-        cards = detect_drm_cards()
+        cards = detect_drm_cards(size=self.panel_size)
+        width, height = self.panel_size
         panel = [c for c in cards if c['panel']]
         if len(panel) == 1:
-            return panel[0]['device'], f"auto: {panel[0]['connector']} reports {PANEL[0]}x{PANEL[1]}"
+            return panel[0]['device'], f"auto: {panel[0]['connector']} reports {width}x{height}"
         if len(panel) > 1:
-            raise Failure('More than one connected 1200x1920 display found; set [display] drm_device',
+            raise Failure(f'More than one connected {width}x{height} display found; set [display] drm_device',
                           '\n'.join(c['device'] + ' ' + c['connector'] for c in panel))
         connected = [c for c in cards if c['connected']]
         if connected:
             modes = ', '.join(f"{c['connector']}: {c['modes'][:3]}" for c in connected)
-            raise Failure(f'No connected display reports the supported {PANEL[0]}x{PANEL[1]} portrait mode',
-                          f'Found {modes}. Only the 10-inch Raspberry Pi Touch Display 2 geometry is supported.')
+            raise Failure(f'No connected display reports the {width}x{height} mode of '
+                          f"[display] panel = {self.get('display', 'panel')}",
+                          f'Found {modes}. Check [display] panel, or force the mode on the kernel command line.')
         raise Failure('No connected DRM display found under /sys/class/drm',
                       'Connect the display and boot with it attached, then run ./rx3 doctor again.')
 
@@ -324,7 +336,7 @@ def load(path=None, overrides=(), env=None, allow_missing=False):
 
 # -- detection helpers (pure reads of /sys and /proc) ---------------------
 
-def detect_drm_cards(sys_root='/sys/class/drm'):
+def detect_drm_cards(sys_root='/sys/class/drm', size=PANELS['touch2-portrait']):
     cards = []
     root = Path(sys_root)
     if not root.is_dir():
@@ -339,7 +351,7 @@ def detect_drm_cards(sys_root='/sys/class/drm'):
         connected = status == 'connected'
         cards.append({'device': f'/dev/dri/{card}', 'connector': connector.name,
                       'connected': connected, 'modes': modes,
-                      'panel': connected and f'{PANEL[0]}x{PANEL[1]}' in modes})
+                      'panel': connected and f'{size[0]}x{size[1]}' in modes})
     return cards
 
 

@@ -9,8 +9,8 @@ This branch's installer has passed PC recovery, assembly and cross-build checks.
 ## Hardware and limits
 
 - Raspberry Pi 5, 4 GB RAM; 64-bit Raspberry Pi OS / Debian with Python 3.9+ and a kernel that runs ARM32 programs. `doctor` checks the kernel.
-- The display code currently supports **1200×1920 portrait, 32-bit framebuffer**, presented rotated as 1920×1200 landscape (the project's 10-inch Raspberry Pi Touch Display 2). Other display sizes need code changes, not just a config setting.
-- DDJ-FLX6 audio/MIDI. Master uses channels 1/2 and headphones 3/4 at 44.1 kHz. Another audio interface needs the same routing and separate validation; another controller needs a mapping adapter.
+- The display code supports **1200×1920 portrait, 32-bit framebuffer**, presented rotated as 1920×1200 landscape (the project's 10-inch Raspberry Pi Touch Display 2, `[display] panel = touch2-portrait`). Untested: `panel = hdmi-1024x600` for a landscape HDMI touch panel, full screen only, with the 1280×800 player scaled to 960×600 between black bars. Other display sizes need code changes, not just a config setting.
+- DDJ-FLX6 audio/MIDI. Master uses channels 1/2 and headphones 3/4 at 44.1 kHz. Another audio interface needs the same routing and separate validation; another controller needs a mapping adapter. Untested: `[controller] model = DDJ-400` with Mixxx's pinned DDJ-400 mapping.
 - A local Linux filesystem such as ext4 for the runtime. Allow at least **1 GB free**; FAT/exFAT/NTFS cannot hold the runtime's Unix files. Music can be a FAT32 rekordbox-export USB. exFAT is implemented but untested.
 - RX3 **1.19 is the supported pin, not the newest-version claim**. The reported newer 1.20 firmware is not supported by these fixed-address patches. Do not substitute another binary.
 
@@ -137,7 +137,7 @@ Recovery reuses verified files and resumes partial downloads. Assembly recognize
 | 16 KiB kernel pages / ARM32 execution fails | Follow `doctor`'s Pi kernel guidance: select `kernel=kernel8.img` in `/boot/firmware/config.txt`, reboot, and check again. The player requires ARM32 support and 4 KiB pages. |
 | `vm.mmap_min_addr` blocks the player | `doctor` explains the required value (32768 or lower) and the sysctl change. The tool does not change system settings automatically. |
 | Device permission denied | Follow `doctor`'s group guidance (`audio`, `video`, `render`, `input` as applicable), then log out/in. Never run the whole setup as root to work around this. |
-| No display / unsupported geometry | `./rx3 doctor`; this presenter requires 1200×1920 portrait 32-bit. Configure the detected DRM card/touch event path only if auto-detection is ambiguous. |
+| No display / unsupported geometry | `./rx3 doctor`; the presenter requires the 32-bit mode of `[display] panel` (1200×1920 portrait, or 1024×600 for `hdmi-1024x600`). Configure the detected DRM card/touch event path only if auto-detection is ambiguous. |
 | Player or helper exits | Read `work/state/logs/player.log`, `display.log`, `touch.log`, `midi.log`. Run `./rx3 stop` to release any partial startup before retrying. |
 | Music USB already mounted without UTF-8 | Unmount it in the desktop without unplugging, then retry; the launcher mounts it with the expected options. |
 | Another runtime or unexplained process owns devices | Stop that installation using its own launcher. This tool scopes stop actions to the configured runtime and refuses to kill a player it cannot identify. |

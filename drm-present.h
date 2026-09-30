@@ -21,7 +21,7 @@ static void drm_cleanup(void){
  close(drmfd);drmfd=-1;
 }
 static void drm_stop(int sig){exit(128+sig);}
-static int drm_start(void){
+static int drm_start(unsigned width,unsigned height){
  const char *card=getenv("RX3_DRM_DEVICE");if(!card||!*card)card="/dev/dri/card0";
  drmfd=open(card,O_RDWR|O_CLOEXEC);if(drmfd<0){perror(card);return 0;}
  drmModeRes *r=drmModeGetResources(drmfd);if(!r)goto fail;
@@ -30,7 +30,7 @@ static int drm_start(void){
   if(c&&c->connection==DRM_MODE_CONNECTED&&c->encoder_id){
    drmModeEncoder *e=drmModeGetEncoder(drmfd,c->encoder_id);
    if(e&&e->crtc_id){saved_crtc=drmModeGetCrtc(drmfd,e->crtc_id);
-    if(saved_crtc&&saved_crtc->mode_valid&&saved_crtc->mode.hdisplay==1200&&saved_crtc->mode.vdisplay==1920){connector=c->connector_id;crtc=e->crtc_id;mode=saved_crtc->mode;}
+    if(saved_crtc&&saved_crtc->mode_valid&&saved_crtc->mode.hdisplay==width&&saved_crtc->mode.vdisplay==height){connector=c->connector_id;crtc=e->crtc_id;mode=saved_crtc->mode;}
     else {if(saved_crtc)drmModeFreeCrtc(saved_crtc);saved_crtc=0;}
    }
    if(e)drmModeFreeEncoder(e);
@@ -40,10 +40,10 @@ static int drm_start(void){
  }
  drmModeFreeResources(r);if(!crtc)goto fail;
  for(int i=0;i<2;i++){
-  struct drm_mode_create_dumb b={.width=1200,.height=1920,.bpp=32};
+  struct drm_mode_create_dumb b={.width=width,.height=height,.bpp=32};
   if(drmIoctl(drmfd,DRM_IOCTL_MODE_CREATE_DUMB,&b))goto fail;
   scanout[i].handle=b.handle;scanout[i].pitch=b.pitch;scanout[i].size=b.size;
-  if(drmModeAddFB(drmfd,1200,1920,24,32,b.pitch,b.handle,&scanout[i].fb))goto fail;
+  if(drmModeAddFB(drmfd,width,height,24,32,b.pitch,b.handle,&scanout[i].fb))goto fail;
   struct drm_mode_map_dumb m={.handle=b.handle};
   if(drmIoctl(drmfd,DRM_IOCTL_MODE_MAP_DUMB,&m))goto fail;
   scanout[i].map=mmap(0,b.size,PROT_READ|PROT_WRITE,MAP_SHARED,drmfd,m.offset);

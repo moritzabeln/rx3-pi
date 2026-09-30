@@ -16,7 +16,7 @@ from pathlib import Path
 
 from . import REPO
 from .assemble import BIND_DIRS, BIND_FILES, FIFOS, filesystem_check, read_marker
-from .config import PANEL, SUPPORTED_FIRMWARE, alsa_cards, detect_drm_cards, detect_touchscreens
+from .config import SUPPORTED_FIRMWARE, alsa_cards, detect_drm_cards, detect_touchscreens
 from .recover import RELEASE, memory_available
 from .system import running
 from .ui import Failure, fail, info, ok, say, stage, warn
@@ -322,7 +322,12 @@ class Doctor:
             return
         config = self.config
         # Display
-        cards = detect_drm_cards()
+        try:
+            width, height = config.panel_size
+        except Failure as error:
+            self.fail(str(error))
+            return
+        cards = detect_drm_cards(size=(width, height))
         try:
             drm, how = config.drm_device()
             self.ok(f'Display {drm} ({how})')
@@ -336,12 +341,12 @@ class Doctor:
         try:
             size = Path(f'/sys/class/graphics/{name}/virtual_size').read_text().strip()
             bpp = Path(f'/sys/class/graphics/{name}/bits_per_pixel').read_text().strip()
-            if size.split(',')[:2] == [str(PANEL[0]), str(PANEL[1])] and bpp == '32':
-                self.ok(f'Framebuffer {fb} is {PANEL[0]}x{PANEL[1]} 32-bit')
+            if size.split(',')[:2] == [str(width), str(height)] and bpp == '32':
+                self.ok(f'Framebuffer {fb} is {width}x{height} 32-bit')
             else:
                 self.fail(f'Framebuffer {fb} is {size.replace(",", "x")} at {bpp} bits; '
-                          f'{PANEL[0]}x{PANEL[1]} 32-bit is required',
-                          'Only the 10-inch Raspberry Pi Touch Display 2 (portrait 1200x1920) is supported.')
+                          f'{width}x{height} 32-bit is required',
+                          'Check [display] panel in rx3.conf (touch2-portrait or hdmi-1024x600).')
         except OSError:
             self.fail(f'Framebuffer {fb} not found', 'The display must be connected at boot.')
         if os.path.exists(fb) and not os.access(fb, os.R_OK | os.W_OK):

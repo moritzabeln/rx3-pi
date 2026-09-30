@@ -142,6 +142,22 @@ class SetupTests(unittest.TestCase):
             ensure(c)
         self.assertFalse((self.root / 'map.xml').exists())
 
+    def test_display_panel_selects_mode(self):
+        sys_root = self.root / 'drm'
+        for name, status, modes in (('card1-HDMI-A-1', 'connected', '1024x600\n800x480\n'),
+                                    ('card1-DSI-1', 'disconnected', '')):
+            (sys_root / name).mkdir(parents=True)
+            (sys_root / name / 'status').write_text(status + '\n')
+            (sys_root / name / 'modes').write_text(modes)
+        self.assertTrue(config.load(self.conf, ['display.panel=hdmi-800x480'], env={}).validate())
+        hdmi = config.load(self.conf, ['display.panel=hdmi-1024x600'], env={})
+        self.assertEqual(hdmi.validate(), [])
+        real = config.detect_drm_cards
+        with patch('rx3tool.config.detect_drm_cards', lambda size: real(str(sys_root), size)):
+            self.assertEqual(hdmi.drm_device()[0], '/dev/dri/card1')
+            with self.assertRaisesRegex(Failure, '1200x1920'):
+                self.cfg.drm_device()
+
     def test_controller_model_selects_pinned_mapping(self):
         from rx3tool.mapping import MAPPINGS
         self.assertTrue(config.load(self.conf, ['controller.model=DDJ-SX'], env={}).validate())

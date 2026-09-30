@@ -21,4 +21,25 @@ static void rx3_fullscreen_present(unsigned char *dst,unsigned pitch,
   memcpy(dst+y*pitch,row,sizeof(row));
  }
 }
+/* 1280x800 -> 960x600 between 32-px black bars; 4->3 area average so thin lines don't vanish.
+ * Two 8-bit channels share each 32-bit word; the largest lane sum is 255*16. */
+static void rx3_letterbox_present(unsigned char *dst,unsigned pitch,const uint32_t *src){
+ uint32_t rb[1280],ag[1280];
+ for(int y=0;y<600;y++){
+  int r=y%3;uint32_t w0=3-r,w1=1+r;
+  const uint32_t *a=src+(y/3*4+r)*1280,*b=a+1280;
+  for(int x=0;x<1280;x++){
+   rb[x]=(a[x]&0xff00ff)*w0+(b[x]&0xff00ff)*w1;
+   ag[x]=(a[x]>>8&0xff00ff)*w0+(b[x]>>8&0xff00ff)*w1;
+  }
+  uint32_t *row=(uint32_t*)(dst+y*pitch);
+  memset(row,0,32*4);memset(row+992,0,32*4);
+  for(int x=0;x<960;x++){
+   int q=x%3,sx=x/3*4+q;uint32_t v0=3-q,v1=1+q;
+   uint32_t lo=(rb[sx]*v0+rb[sx+1]*v1+0x80008)>>4&0xff00ff;
+   uint32_t hi=(ag[sx]*v0+ag[sx+1]*v1+0x80008)>>4&0xff00ff;
+   row[32+x]=lo|hi<<8;
+  }
+ }
+}
 #endif

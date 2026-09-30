@@ -33,8 +33,11 @@ gid = auto
 groups = auto
 
 [display]
-# Only a 1200x1920 portrait panel (10-inch Raspberry Pi Touch Display 2)
-# is supported. auto picks the connected DRM card reporting that mode.
+# touch2-portrait: 10-inch Raspberry Pi Touch Display 2, 1200x1920 portrait (tested)
+# hdmi-1024x600: landscape HDMI panel; the 1280x800 player is scaled to 960x600
+#   with black bars, full screen only (untested)
+panel = touch2-portrait
+# auto picks the connected DRM card reporting the panel's mode.
 drm_device = auto
 fb_device = /dev/fb0
 
