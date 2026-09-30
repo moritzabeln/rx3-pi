@@ -65,7 +65,7 @@ def selftest(verbose=False):
         else:
             for name in ('test-frame-exchange', 'test-frame-scale', 'test-mixer-layout', 'test-mixer-state',
                          'test-tempo-step', 'test-tempo-input', 'test-pad-bank', 'test-pad-intent',
-                         'test-audio-recovery'):
+                         'test-audio-recovery', 'test-led-state'):
                 result = subprocess.run([os.path.join(out, name)], capture_output=True, text=True)
                 code = result.returncode
                 if code:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Use BiteDJ's installed MIDI definitions to feed the RX3 native key queue.
-Input only; hot-cue, beat-loop and default beat-jump banks supported. LED feedback pending.
+Hot-cue, beat-loop and default beat-jump banks supported. LED feedback for profiles with an LED map.
 """
 import argparse, ctypes, errno, json, os, re, signal, struct, subprocess, time
 import xml.etree.ElementTree as ET
@@ -16,7 +16,7 @@ PAD_BANKS={"pad-hotcue":0,"pad-beatloop":1,"pad-beatjump":3}
 LOOP_SIZES=("0.25","0.5","1","2","4","8","16","32")
 # jog_scale converts platter ticks to the FLX6's 7200 ticks per revolution.
 PROFILES={
- 'DDJ-FLX6':dict(prefix='PioneerDDJFLX6.',jog_scale=1,zoom_sign=1,aliases={},extra=()),
+ 'DDJ-FLX6':dict(prefix='PioneerDDJFLX6.',jog_scale=1,zoom_sign=1,aliases={},extra=(),leds=None),
  # Mixxx's Pioneer-DDJ-400 mapping; 720 ticks/revolution as in its scratchEnable().
  'DDJ-400':dict(prefix='PioneerDDJ400.',jog_scale=10,zoom_sign=-1,
   aliases={'PioneerDDJ400.syncPressed':'sync_enabled','PioneerDDJ400.syncLongPressed':'sync_leader',
@@ -28,10 +28,15 @@ PROFILES={
   # Official MIDI list; unmapped in Mixxx: Shift + browse turn, Shift + LOAD deck 2.
   # The plain native Browse key toggles player/library (FLX6 VIEW only opens it).
   extra=(('[Library]','PioneerDDJ400.waveformZoom','0xb6','0x64',set()),
-   ('[Tab]','Browse','0x96','0x7a',set())))}
+   ('[Tab]','Browse','0x96','0x7a',set())),
+  # RX3 panel LED id -> DDJ-400 LED notes (official MIDI list); the Shift layer mirrors them.
+  leds=dict(deck={1:(0x0b,0x47),2:(0x0c,0x48),4:(0x58,),7:(0x10,0x4c),8:(0x11,0x4e),9:(0x4d,0x50),50:(0x54,0x68)},
+   # Active RX3 pad mode (HotCue, AutoBeatLoop, BeatJump LED) -> DDJ-400 pad note base.
+   banks={14:0x00,15:0x60,17:0x20},pads=(0x97,0x99),common={51:(0x96,0x63)}))}
 class Bridge:
  def __init__(self,xml,emit,clock=time.monotonic,model='DDJ-FLX6'):
   profile=PROFILES[model];prefix=profile['prefix'];self.jog_scale=profile['jog_scale'];self.zoom_sign=profile['zoom_sign']
+  self.leds=profile['leds'];self.led_sent={}
   self.clock=clock;self.jogs={ch:dict(total=0,delta=0,last=clock(),moved=0,speed=0) for ch in (1,2)}
   self.emit=emit;self.mapping={};self.msb={};self.held=set();self.pad_held={};self.status=None;self.data=[]
   self.shift={1:False,2:False}
@@ -179,16 +184,55 @@ class Bridge:
   for key,ch in list(self.held):self.emit(key,2,ch,0,0.,0)
   self.held.clear();self.pad_held.clear()
   for ch in self.shift:self.shift[ch]=False;self.grid_ticks[ch]=0
-def listen_reconnecting(b,lib,running,discover,sleep=time.sleep):
+ def led_frame(self,states):
+  """MIDI that brings the controller LEDs to states[channel*64+id] (bit0 lit, bit1 active)."""
+  if not self.leds:return b''
+  leds=self.leds;want={}
+  for ch in (1,2):
+   row=states[ch*64:ch*64+64];status=0x8f+ch;pad=leds['pads'][ch-1]
+   for led,notes in leds['deck'].items():
+    for note in notes:want[(status,note)]=row[led]&1
+   bank=next((base for led,base in leds['banks'].items() if row[led]&2),None)
+   # RX3 pads 1-8 are LEDs 18-25; only the active mode's notes show them.
+   for base in leds['banks'].values():
+    for i in range(8):want[(pad,base+i)]=want[(pad+1,base+i)]=row[18+i]&1 if base==bank else 0
+  for led,key in leds['common'].items():want[key]=states[led]&1
+  out=bytearray()
+  for (status,note),lit in want.items():
+   if self.led_sent.get((status,note))!=lit:
+    self.led_sent[(status,note)]=lit;out+=bytes((status,note,0x7f if lit else 0))
+  return bytes(out)
+ def led_reset(self):self.led_sent.clear()
+ def led_off(self):
+  out=bytes(v for (status,note),lit in self.led_sent.items() if lit for v in (status,note,0))
+  self.led_sent.clear();return out
+class LedState:
+ """Poll the panel LED states published by the player shim (led-publish.c)."""
+ MAGIC=0x4c335852
+ def __init__(self,path):self.path=path;self.fd=None;self.seq=None;self.retry=0.
+ def reset(self):self.seq=None
+ def poll(self,now):
+  if self.fd is None:
+   if now<self.retry:return None
+   try:self.fd=os.open(self.path,os.O_RDONLY)
+   except OSError:self.retry=now+1;return None
+  magic,seq=struct.unpack('<II',os.pread(self.fd,8,0).ljust(8,b'\0'))
+  if magic!=self.MAGIC or seq==self.seq:return None
+  states=os.pread(self.fd,192,8)
+  if len(states)<192:return None
+  self.seq=seq;return states
+ def close(self):
+  if self.fd is not None:os.close(self.fd);self.fd=None
+def listen_reconnecting(b,lib,running,discover,sleep=time.sleep,leds=None,clock=time.monotonic):
  """Release controller gestures on loss; rediscover ALSA numbering on return."""
  buf=ctypes.create_string_buffer(1024)
  waiting=False
  while running():
-  handle=ctypes.c_void_p()
+  handle=ctypes.c_void_p();out=ctypes.c_void_p()
   try:
    devices=discover()
    if len(devices)!=1:raise OSError(errno.ENODEV,'Expected one controller MIDI input')
-   rc=lib.snd_rawmidi_open(ctypes.byref(handle),None,devices[0].encode(),2)
+   rc=lib.snd_rawmidi_open(ctypes.byref(handle),ctypes.byref(out) if leds else None,devices[0].encode(),2)
    if rc<0:raise OSError(-rc,'Cannot open controller MIDI input')
   except (OSError,subprocess.SubprocessError) as e:
    if not waiting:print(f'Waiting for controller MIDI: {e}',flush=True)
@@ -198,7 +242,10 @@ def listen_reconnecting(b,lib,running,discover,sleep=time.sleep):
     sleep(.05)
    continue
   waiting=False
-  print(f'Listening to {devices[0]} (input only)',flush=True)
+  print(f'Listening to {devices[0]}'+(' (with LED output)' if leds else ' (input only)'),flush=True)
+  # A new connection starts with unknown LEDs; resend every state.
+  b.led_reset();pending=b''
+  if leds:leds.reset()
   try:
    while running():
     n=lib.snd_rawmidi_read(handle,buf,len(buf))
@@ -208,10 +255,20 @@ def listen_reconnecting(b,lib,running,discover,sleep=time.sleep):
      print(f'Controller MIDI read failed ({n}); reconnecting',flush=True)
      break
     b.tick()
+    if leds:
+     states=leds.poll(clock())
+     if states:pending+=b.led_frame(states)
+     if pending:
+      w=lib.snd_rawmidi_write(out,pending,len(pending))
+      if w>0:pending=pending[w:]
   finally:
    try:b.release()
    finally:
     lib.snd_rawmidi_close(handle)
+    if leds and out.value:
+     off=b.led_off()
+     if off:lib.snd_rawmidi_write(out,off,len(off))
+     lib.snd_rawmidi_close(out)
     # Never carry a partial message or old 14-bit MSB into a new connection.
     b.status=None;b.data=[];b.msb.clear()
   # Avoid a busy reconnect loop if ALSA still lists a failed device.
@@ -227,6 +284,7 @@ def main():
  p.add_argument('--state',help='jog counter file kept across bridge restarts')
  p.add_argument('--port-name',default='DDJ-FLX6',help='MIDI port name shown by amidi -l')
  p.add_argument('--model',choices=sorted(PROFILES),default='DDJ-FLX6',help='controller the mapping XML is for')
+ p.add_argument('--led-state',help='LED states published by the player shim (default: next to --fifo)')
  p.add_argument('--replay');p.add_argument('--dry-run',action='store_true')
  p.add_argument('--check-mapping',action='store_true',help='only load the mapping and report the binding count');a=p.parse_args()
  if a.check_mapping:
@@ -248,9 +306,12 @@ def main():
    for ch in (1,2):b.jogs[ch]['total']=int(previous['totals'][str(ch)])
  except (OSError,ValueError,KeyError,TypeError):pass
  lib=ctypes.CDLL('libasound.so.2');handle=ctypes.c_void_p()
- lib.snd_rawmidi_open.argtypes=[ctypes.POINTER(ctypes.c_void_p),ctypes.c_void_p,ctypes.c_char_p,ctypes.c_int]
+ lib.snd_rawmidi_open.argtypes=[ctypes.POINTER(ctypes.c_void_p),ctypes.POINTER(ctypes.c_void_p),ctypes.c_char_p,ctypes.c_int]
  lib.snd_rawmidi_read.argtypes=[ctypes.c_void_p,ctypes.c_void_p,ctypes.c_size_t];lib.snd_rawmidi_read.restype=ctypes.c_ssize_t
+ lib.snd_rawmidi_write.argtypes=[ctypes.c_void_p,ctypes.c_char_p,ctypes.c_size_t];lib.snd_rawmidi_write.restype=ctypes.c_ssize_t
  lib.snd_rawmidi_close.argtypes=[ctypes.c_void_p]
+ led_path=a.led_state or (a.fifo and os.path.join(os.path.dirname(a.fifo),'rx3-led-state'))
+ leds=LedState(led_path) if b.leds and led_path else None
  def discover():
   listing=subprocess.check_output(['amidi','-l'],text=True)
   return re.findall(r'^I[O ]\s+(hw:\S+)\s+.*'+re.escape(a.port_name),listing,re.M)
@@ -260,9 +321,10 @@ def main():
   running=False
  signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
  try:
-  listen_reconnecting(b,lib,lambda:running,discover)
+  listen_reconnecting(b,lib,lambda:running,discover,leds=leds)
  finally:
   b.release()
+  if leds:leds.close()
   with open(statefile+'.tmp','w') as f:json.dump({'player':player,'totals':{ch:j['total'] for ch,j in b.jogs.items()}},f)
   os.replace(statefile+'.tmp',statefile)
   if fd is not None:os.close(fd)

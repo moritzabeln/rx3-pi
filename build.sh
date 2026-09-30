@@ -48,6 +48,7 @@ if [ "$mode" = native ] || [ "$mode" = all ]; then
   "$cc" -O2 -o "$out/$test" "$test.c"
  done
  "$cc" -std=c11 -O2 -o "$out/test-audio-recovery" audio-recovery.c test-audio-recovery.c
+ "$cc" -std=c11 -O2 -I . -o "$out/test-led-state" test-led-state.c
  echo "Built Pi-side helpers in $out: rx3-fb-present rx3-touch-bridge (and host tests)"
 fi
 if [ "$mode" = shim ] || [ "$mode" = all ]; then

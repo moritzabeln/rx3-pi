@@ -355,6 +355,7 @@ class Launcher:
                 if not self.dry_run:
                     with Tree(self.runtime) as tree:
                         tree.sparse_file('dev/rx3-present-frame', FRAME_BYTES, 0o600)
+                        tree.sparse_file('dev/rx3-led-state', 4096, 0o600)
                         tree.write('dev/rx3-ui-state', UI_STATE, 0o600)
                 stage('Starting the player')
                 if not self.dry_run:
