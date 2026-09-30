@@ -98,8 +98,8 @@ class Leds(unittest.TestCase):
   self.assertEqual(self.messages(self.frame(c1_14=3,c1_18=3,c1_19=7)),{(0x97,0x00,0x7f),(0x98,0x00,0x7f)})
  def test_channel_level_meters(self):
   self.frame()
-  self.assertEqual(self.messages(self.frame(meter1=11,meter2=3)),{(0xb0,0x02,127),(0xb1,0x02,35)})
-  self.assertEqual(self.messages(self.frame(meter1=11)),{(0xb1,0x02,0)})
+  self.assertEqual(self.messages(self.frame(meter1=11,meter2=3)),{(0xb0,0x02,127),(0xb1,0x02,48)})
+  self.assertEqual(self.messages(self.frame(meter1=8)),{(0xb1,0x02,0)})
   self.assertIn((0xb0,0x02,0),self.messages(self.b.led_off()))
  def test_off_and_reset(self):
   self.frame(c1_2=3)

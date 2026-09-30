@@ -32,7 +32,8 @@ PROFILES={
   # RX3 panel LED id -> DDJ-400 LED notes (official MIDI list); the Shift layer mirrors them.
   leds=dict(deck={1:(0x0b,0x47),2:(0x0c,0x48),4:(0x58,),7:(0x10,0x4c),8:(0x11,0x4e),9:(0x4d,0x50),50:(0x54,0x68)},
    # Active RX3 pad mode (HotCue, AutoBeatLoop, BeatJump LED) -> DDJ-400 pad note base.
-   banks={14:0x00,15:0x60,17:0x20},pads=(0x97,0x99),common={51:(0x96,0x63)},meter=0x02))}
+   # meter_full: RX3 meter segment (of 11, -24..+14 dB) shown as a full DDJ-400 meter; 8 is ~+6 dB.
+   banks={14:0x00,15:0x60,17:0x20},pads=(0x97,0x99),common={51:(0x96,0x63)},meter=0x02,meter_full=8))}
 class Bridge:
  def __init__(self,xml,emit,clock=time.monotonic,model='DDJ-FLX6'):
   profile=PROFILES[model];prefix=profile['prefix'];self.jog_scale=profile['jog_scale'];self.zoom_sign=profile['zoom_sign']
@@ -199,7 +200,7 @@ class Bridge:
    # RX3 pads 1-8 are LEDs 18-25; only the active mode's notes show them.
    for base in leds['banks'].values():
     for i in range(8):want[(pad,base+i)]=want[(pad+1,base+i)]=on(row[18+i]) if base==bank else 0
-   if len(states)>192+ch:want[(0xaf+ch,leds['meter'])]=min(127,round(states[192+ch]*127/11))
+   if len(states)>192+ch:want[(0xaf+ch,leds['meter'])]=min(127,round(states[192+ch]*127/leds['meter_full']))
   for led,key in leds['common'].items():want[key]=on(states[led])
   out=bytearray()
   for (status,note),value in want.items():
