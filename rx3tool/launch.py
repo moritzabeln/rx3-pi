@@ -392,8 +392,13 @@ class Launcher:
                     break
                 time.sleep(.5)
             if player_process.poll() is not None:
+                code = player_process.returncode
+                # sudo re-raises the child's fatal signal on itself.
+                how = (f'killed by {signal.Signals(-code).name}' if code < 0 and -code in signal.valid_signals()
+                       else f'exit status {code}')
                 tail = log_tail(self.logs / 'player.log')
-                raise Failure('The player exited during startup', 'Last lines of the player log:\n' + tail)
+                raise Failure(f'The player exited during startup ({how})',
+                              'Last lines of the player log:\n' + tail)
             if usb:
                 self.notify('proc/udev_usb1', b'mount /media/usb1/sda1')
                 if mount_at(self.rt(USB2 + '/Contents')):
