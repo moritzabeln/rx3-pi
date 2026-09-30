@@ -9,7 +9,7 @@ BUTTONS={'play':0x4101,'cue_default':0x4102,'loop_in':0x410c,'loop_out':0x410d,
  'keylock':0x4108,'PioneerDDJFLX6.cycleTempoRange':0x4107,'quantize':0x410b,'pfl':0x5020,'LoadSelectedTrack':0x4311,
  'MoveFocusForward':0x420c,'MoveFocusBackward':0x420d,'PioneerDDJFLX6.shiftPressed':0x4103,
  # Native RX3 keys, reached through profile aliases.
- 'CallPrev':0x4323,'CallNext':0x4322,'CueDelete':0x4124,'CueMemory':0x4125}
+ 'CallPrev':0x4323,'CallNext':0x4322,'CueDelete':0x4124,'CueMemory':0x4125,'Browse':0x202}
 ANALOG={'pregain':0x5019,'parameter3':0x501a,'parameter2':0x501b,'parameter1':0x501c,
  'volume':0x501e,'super1':0x509d,'crossfader':0x6017,'headMix':0x4405}
 PAD_BANKS={"pad-hotcue":0,"pad-beatloop":1,"pad-beatjump":3}
@@ -26,8 +26,9 @@ PROFILES={
    # Shift + CUE/LOOP CALL (Mixxx: 32-beat jumps) as in rekordbox: delete / memory.
    'PioneerDDJ400.quickJumpBack':'CueDelete','PioneerDDJ400.quickJumpForward':'CueMemory'},
   # Official MIDI list; unmapped in Mixxx: Shift + browse turn, Shift + LOAD deck 2.
+  # The plain native Browse key toggles player/library (FLX6 VIEW only opens it).
   extra=(('[Library]','PioneerDDJ400.waveformZoom','0xb6','0x64',set()),
-   ('[Tab]','library','0x96','0x7a',set())))}
+   ('[Tab]','Browse','0x96','0x7a',set())))}
 class Bridge:
  def __init__(self,xml,emit,clock=time.monotonic,model='DDJ-FLX6'):
   profile=PROFILES[model];prefix=profile['prefix'];self.jog_scale=profile['jog_scale'];self.zoom_sign=profile['zoom_sign']

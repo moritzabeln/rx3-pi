@@ -34,8 +34,8 @@ class DDJ400(unittest.TestCase):
   self.assertEqual(self.feed(0x96,0x41,0x7f,0x41,0),[(0x420c,0,0,0,0.,0x4250)])
   self.assertEqual(self.feed(0x96,0x42,0x7f,0x42,0),[(0x420d,0,0,0,0.,0x424b)])
   self.assertEqual(self.feed(0x96,0x46,0x7f,0x47,0x7f),[(0x4311,0,1,0,0.,0),(0x4311,0,2,0,0.,0)])
-  # Shift + LOAD deck 2 toggles the library view, like the FLX6's VIEW button.
-  self.assertEqual(self.feed(0x96,0x7a,0x7f,0x7a,0),[(0x202,0,0,0,0.,0x4256)])
+  # Shift + LOAD deck 2 toggles player/library with the native Browse key.
+  self.assertEqual(self.feed(0x96,0x7a,0x7f,0x7a,0),[(0x202,0,0,0,0.,0),(0x202,2,0,0,0.,0)])
  def test_cue_loop_call(self):
   self.assertEqual(self.feed(0x90,0x51,0x7f,0x51,0),[(0x4323,0,1,0,0.,0),(0x4323,2,1,0,0.,0)])
   self.assertEqual(self.feed(0x91,0x53,0x7f),[(0x4322,0,2,0,0.,0)])
