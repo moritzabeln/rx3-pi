@@ -328,9 +328,11 @@ class Doctor:
             self.fail(str(error))
             return
         cards = detect_drm_cards(size=(width, height))
+        drm_ok = False
         try:
             drm, how = config.drm_device()
             self.ok(f'Display {drm} ({how})')
+            drm_ok = True
             if not os.access(drm, os.R_OK | os.W_OK):
                 self.fail(f'No permission to use {drm}', 'Add yourself to the video group:\n'
                           '  sudo usermod -aG video,render $USER   (then log out and back in)')
@@ -343,6 +345,9 @@ class Doctor:
             bpp = Path(f'/sys/class/graphics/{name}/bits_per_pixel').read_text().strip()
             if size.split(',')[:2] == [str(width), str(height)] and bpp == '32':
                 self.ok(f'Framebuffer {fb} is {width}x{height} 32-bit')
+            elif drm_ok:
+                info(f'Framebuffer {fb} is {size.replace(",", "x")} at {bpp} bits; not used while '
+                     f'the DRM display works (RX3 switches it to {width}x{height} itself)')
             else:
                 self.fail(f'Framebuffer {fb} is {size.replace(",", "x")} at {bpp} bits; '
                           f'{width}x{height} 32-bit is required',

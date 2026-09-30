@@ -30,7 +30,11 @@ static int drm_start(unsigned width,unsigned height){
   if(c&&c->connection==DRM_MODE_CONNECTED&&c->encoder_id){
    drmModeEncoder *e=drmModeGetEncoder(drmfd,c->encoder_id);
    if(e&&e->crtc_id){saved_crtc=drmModeGetCrtc(drmfd,e->crtc_id);
-    if(saved_crtc&&saved_crtc->mode_valid&&saved_crtc->mode.hdisplay==width&&saved_crtc->mode.vdisplay==height){connector=c->connector_id;crtc=e->crtc_id;mode=saved_crtc->mode;}
+    int found=saved_crtc&&saved_crtc->mode_valid&&saved_crtc->mode.hdisplay==width&&saved_crtc->mode.vdisplay==height;
+    if(found)mode=saved_crtc->mode;
+    /* Otherwise switch to a listed mode of the panel's size; drm_cleanup restores the console's mode. */
+    for(int m=0;!found&&m<c->count_modes;m++)if(c->modes[m].hdisplay==width&&c->modes[m].vdisplay==height){mode=c->modes[m];found=1;}
+    if(found&&saved_crtc){connector=c->connector_id;crtc=e->crtc_id;}
     else {if(saved_crtc)drmModeFreeCrtc(saved_crtc);saved_crtc=0;}
    }
    if(e)drmModeFreeEncoder(e);
@@ -38,7 +42,7 @@ static int drm_start(unsigned width,unsigned height){
   if(c)drmModeFreeConnector(c);
   if(crtc)break;
  }
- drmModeFreeResources(r);if(!crtc)goto fail;
+ drmModeFreeResources(r);if(!crtc){fprintf(stderr,"%s: no connected display offers a %ux%u mode\n",card,width,height);drm_cleanup();return 0;}
  for(int i=0;i<2;i++){
   struct drm_mode_create_dumb b={.width=width,.height=height,.bpp=32};
   if(drmIoctl(drmfd,DRM_IOCTL_MODE_CREATE_DUMB,&b))goto fail;

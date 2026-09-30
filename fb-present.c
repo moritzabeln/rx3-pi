@@ -57,7 +57,9 @@ int main(int argc,char**argv){
  if(src<0){perror(argv[1]);return 1;}
  if(dst<0){perror(fbdev);return 1;}
  struct fb_fix_screeninfo f;struct fb_var_screeninfo v;ioctl(dst,FBIOGET_FSCREENINFO,&f);ioctl(dst,FBIOGET_VSCREENINFO,&v);
- if(v.xres!=pw||v.yres!=ph||v.bits_per_pixel!=32){fprintf(stderr,"Unsupported display %ux%u %ubpp on %s; RX3_PANEL=%s needs %ux%u 32bpp\n",v.xres,v.yres,v.bits_per_pixel,fbdev,panel,pw,ph);return 1;}
+ int kms=drm_start(pw,ph);
+ /* The framebuffer is only drawn to when DRM is unavailable. */
+ if(!kms&&(v.xres!=pw||v.yres!=ph||v.bits_per_pixel!=32)){fprintf(stderr,"DRM unavailable and %s is %ux%u %ubpp; RX3_PANEL=%s needs %ux%u 32bpp\n",fbdev,v.xres,v.yres,v.bits_per_pixel,panel,pw,ph);return 1;}
  uint32_t *s=mmap(0,1280*800*4,PROT_READ,MAP_SHARED,src,0);unsigned char *d=mmap(0,f.smem_len,PROT_READ|PROT_WRITE,MAP_SHARED,dst,0);if(s==MAP_FAILED||d==MAP_FAILED)return 1;
  if(argc>3&&!strcmp(argv[3],"--coherent")){
   int pf=open(runtime_path("RX3_PRESENT_FRAME",0,"/dev/rx3-present-frame"),O_RDONLY);
@@ -74,7 +76,6 @@ int main(int argc,char**argv){
  box(0,0,1920,1200,0x101820);for(int i=0;i<12;i++)drawbutton(i,0);
  for(int i=0;i<6;i++){int x=i<3?0:1760,y=(i%3)*333;label(x+80,y+27,slider_names[i],23,0xffffff);}
  memcpy(chrome,frame,sizeof(frame));
- int kms=drm_start(pw,ph);
  fprintf(stderr,"display backend: %s\n",kms?"DRM double-buffered vsync":"fbdev fallback");
  long long deadline=ns(),report=deadline,draw_total=0,last_present=deadline;unsigned frames=0,late=0;
  for(;;){
