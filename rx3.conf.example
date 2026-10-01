@@ -66,6 +66,11 @@ mapping = work/Pioneer-DDJ-FLX6.midi.xml
 # midi_name = DDJ-400
 # mapping = work/Pioneer-DDJ-400.midi.xml
 
+[mixer]
+# no = start with the crossfader bypassed (both decks always audible).
+# The CROSSFADER button in the touch Mixer panel toggles it while running.
+crossfader = yes
+
 [usb]
 # Empty = use any rekordbox USB (FAT32/exFAT with PIONEER/rekordbox/export.pdb),
 # plugged in before or while RX3 runs; eject it with EJECT in the Source view.

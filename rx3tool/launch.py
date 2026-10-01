@@ -207,8 +207,9 @@ class Launcher:
         command = ['prlimit', '--rtprio=99', '--', 'chroot', f'--userspec={uid}:{gid}']
         if groups:
             command.append(f'--groups={groups}')
+        crossfader = 'on' if self.config.flag('mixer', 'crossfader') else 'off'
         return command + [str(self.runtime), '/bin/busybox', 'env', 'LD_PRELOAD=/lib/fbshim.so',
-                          '/root/pdj/rbp-pi', '-a']
+                          f'RX3_CROSSFADER={crossfader}', '/root/pdj/rbp-pi', '-a']
 
     def preflight(self):
         self.require_user()

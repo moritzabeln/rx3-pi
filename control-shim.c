@@ -1,5 +1,6 @@
 /* RX3 v1.19 input adapter: use the firmware's message-queued key entry. */
 #include <fcntl.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <string.h>
@@ -9,6 +10,7 @@ struct command {int key,operation,channel,value;float analog;int extra;};
 #include "native-screen.h"
 #include "native-grid.h"
 #include "mixer-state.h"
+#include "native-mixer.h"
 #include "pad-bank.h"
 #include "pad-intent.h"
 static int pad_mode(void *ctx,int deck){(void)ctx;return ((int (*)(int))0xfd3cc)(deck);}
@@ -31,8 +33,11 @@ static void *control_thread(void *unused){
  ((void (*)(void*,int,int))0x50598)(engine,0,0);
  ((void (*)(void*,int,int))0x50598)(engine,1,1);
  /* Native assignment0 bypasses the crossfader; assign the two decks A/B. */
- ((void (*)(void*,int,int))0x4cc0c)(engine,0,1);
- ((void (*)(void*,int,int))0x4cc0c)(engine,1,2);
+ const char *xf=getenv("RX3_CROSSFADER");
+ int xf_off=xf&&!strcmp(xf,"off");
+ ((void (*)(void*,int,int))0x4cc0c)(engine,0,xf_off?0:1);
+ ((void (*)(void*,int,int))0x4cc0c)(engine,1,xf_off?0:2);
+ rx3_crossfader_off=xf_off;
  void (*sendkey)(void*,int,int,int,long,float,long)=rx3_dispatch_key;
  for(int ch=1;ch<=2;ch++){
   sendkey(manager,0x4109,5,ch,0,0.f,0);

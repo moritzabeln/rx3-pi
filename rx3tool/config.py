@@ -59,6 +59,9 @@ DEFAULTS = {
     'usb': {
         'uuid': '',
     },
+    'mixer': {
+        'crossfader': 'yes',
+    },
 }
 
 ALSA_ID = re.compile(r'^[A-Za-z0-9_]{1,15}$')
@@ -146,6 +149,7 @@ class Config:
             problems.append(f'[firmware] version = {version!r} is not supported; only '
                             f'{SUPPORTED_FIRMWARE} is. {NEWER_FIRMWARE_NOTE}')
         check(lambda: self.flag('firmware', 'tempo_range_25'))
+        check(lambda: self.flag('mixer', 'crossfader'))
         for key in ('work', 'runtime', 'state', 'build'):
             check(lambda key=key: self.path('paths', key))
         try:
