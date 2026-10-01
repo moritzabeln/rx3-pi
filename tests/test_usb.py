@@ -73,18 +73,17 @@ class UsbTests(unittest.TestCase):
             w.scan = lambda: {}
             w.poll()
             self.assertIsNone(w.current)
-            self.assertEqual(launcher.sent, [('proc/udev_usb1', 'umount /media/usb1/sda1'),
-                                             ('proc/udev_usb2', 'umount /media/usb2/sdb1'), ('release', '')])
+            self.assertEqual(launcher.sent, [('proc/udev_usb2', 'umount /media/usb2/sdb1'), ('release', '')])
             w.scan = lambda: dict(present)
             w.poll()
             self.assertEqual(attached, [A, A])
 
-    def test_eject_releases_both_slots_and_waits_for_unplug(self):
+    def test_eject_releases_stick_and_waits_for_unplug(self):
         present = {A: ('/dev/sda1', 'vfat')}
         w, launcher = self.watcher(present)
         w.current = A
         w.eject({'/media/usb1/sda1'})
-        # The player stopped USB1 itself; USB2 is reported removed so both slots stay consistent.
+        # Only USB2 is visible to the player, so it is reported removed even if USB1 was stopped.
         self.assertEqual(launcher.sent, [('proc/udev_usb2', 'umount /media/usb2/sdb1'), ('release', '')])
         self.assertIsNone(w.current)
         with patch.object(UsbWatcher, 'attach') as attach:
@@ -119,7 +118,7 @@ class UsbTests(unittest.TestCase):
         (self.runtime / USB1 / 'PIONEER/rekordbox/export.pdb').write_bytes(b'db')
         with patch.object(UsbWatcher, 'mount_stick'), patch.object(UsbWatcher, 'library'):
             self.assertTrue(w.attach(A, '/dev/sda1', 'vfat'))
-        self.assertEqual([m for _, m in launcher.sent[1:]], ['mount /media/usb1/sda1', 'mount /media/usb2/sdb1'])
+        self.assertEqual([m for _, m in launcher.sent[1:]], ['mount /media/usb2/sdb1'])
 
     def test_eject_requests_collect_both_slots(self):
         w, _ = self.watcher({})
@@ -131,10 +130,12 @@ class UsbTests(unittest.TestCase):
         self.assertEqual(w.requests(0), set())
         os.write(write, b'eject /media/usb1/sda1\neject /media/usb2/sdb1\nbogus /etc\n')
         self.assertEqual(w.requests(0), set(SLOTS))
-        clock = iter([0., 2., 3.])
-        w.clock = lambda: next(clock)
         os.write(write, b'eject /media/usb2/sdb1\n')
         self.assertEqual(w.requests(0), {'/media/usb2/sdb1'})
+        clock = iter([0., 2., 3.])
+        w.clock = lambda: next(clock)
+        os.write(write, b'eject /media/usb1/sda1\n')
+        self.assertEqual(w.requests(0), {'/media/usb1/sda1'})
 
     def test_existing_library_copy_moves_to_its_stick(self):
         dst = self.runtime / USB2

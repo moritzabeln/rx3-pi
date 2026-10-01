@@ -94,7 +94,7 @@ To stop and release the devices/mounts:
 ./rx3 stop
 ```
 
-The USB is mounted **read-only inside the RX3 runtime** and shown to the player as USB1; USB2 is a local copy of its database/analysis files in `work/runtime/media/usb2/.rx3-libraries/<UUID>`, preserving local cue/grid edits on later starts. Each stick has its own copy, so databases never mix. Music stays on the USB; the supported music folders are `Contents`, `Music` and `PIONEER/Artwork`. This does not write edits back to the original USB. Re-exporting the same USB does not automatically refresh existing local database/analysis files; move that stick's folder away to start from the new export.
+The USB is mounted **read-only inside the RX3 runtime** as USB1, which is hidden from the player; the player sees only USB2, a local copy of its database/analysis files in `work/runtime/media/usb2/.rx3-libraries/<UUID>`, preserving local cue/grid edits on later starts. Each stick has its own copy, so databases never mix. Music stays on the USB; the supported music folders are `Contents`, `Music` and `PIONEER/Artwork`. This does not write edits back to the original USB. Re-exporting the same USB does not automatically refresh existing local database/analysis files; move that stick's folder away to start from the new export.
 
 ## Settings and individual steps
 

@@ -1,7 +1,7 @@
 """USB hot-plug and eject while the player runs (`./rx3 usb-watch`, started by `./rx3 start`).
 
-One rekordbox USB at a time is shown to the player twice: read-only as USB1
-(media/usb1/sda1) and as USB2 (media/usb2/sdb1), a writable local copy of the
+One rekordbox USB at a time is mounted read-only at USB1 (media/usb1/sda1), hidden from the
+player, and shown as USB2 (media/usb2/sdb1): a writable local copy of the
 rekordbox database/analysis with the music folders bound read-only from the stick.
 Local copies are kept per stick UUID, so several sticks never mix databases.
 
@@ -26,6 +26,8 @@ from .ui import Failure, info, ok, say, warn
 LIBRARIES = 'media/usb2/.rx3-libraries'
 STAMP = '.rx3-usb-uuid'
 SLOTS = {'/media/usb1/sda1': (USB1, 'proc/udev_usb1'), '/media/usb2/sdb1': (USB2, 'proc/udev_usb2')}
+# Only the local library is announced; USB1 stays a hidden read-only source for it.
+SHOWN = ['/media/usb2/sdb1']
 UUID_NAME = re.compile(r'^[0-9A-Fa-f][0-9A-Fa-f-]{3,35}$')
 DEVICE = re.compile(r'^/dev/[A-Za-z0-9_]+$')
 
@@ -122,8 +124,8 @@ class UsbWatcher:
             self.release()
             return False
         self.current = uuid
-        self.notify(SLOTS, 'mount')
-        ok(f'USB {uuid} ready as USB1 (read-only) and USB2 (local library)')
+        self.notify(SHOWN, 'mount')
+        ok(f'USB {uuid} ready as USB2 (local library)')
         return True
 
     def mount_stick(self, device, fstype):
@@ -185,7 +187,7 @@ class UsbWatcher:
         self.skip &= set(present)
         if self.current and self.current not in present:
             warn(f'USB {self.current} was unplugged without EJECT; releasing it')
-            self.notify(SLOTS, 'umount')
+            self.notify(SHOWN, 'umount')
             self.release()
             self.current = None
         if self.current:
@@ -202,7 +204,7 @@ class UsbWatcher:
         """The player stopped `requested` slots; release the stick from both."""
         if not self.current:
             return
-        others = [path for path in SLOTS if path not in requested]
+        others = [path for path in SHOWN if path not in requested]
         if others:
             self.notify(others, 'umount')
         self.release()
@@ -227,7 +229,7 @@ class UsbWatcher:
                     word, _, path = line.partition(' ')
                     if word == 'eject' and path in SLOTS:
                         found.add(path)
-            if not found or len(found) == len(SLOTS) or (deadline and self.clock() >= deadline):
+            if not found or set(SHOWN) <= found or (deadline and self.clock() >= deadline):
                 return found
             if deadline is None:
                 deadline = self.clock() + 2
@@ -323,5 +325,5 @@ def main(config, running=lambda: True):
         return 0
     finally:
         if watcher.current:
-            watcher.notify(SLOTS, 'umount')
+            watcher.notify(SHOWN, 'umount')
             watcher.release()
