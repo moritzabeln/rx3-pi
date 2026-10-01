@@ -47,9 +47,9 @@ static int paint_zoom(int show){
  s.painted=1;s.last_pressed=pressed;return 1;
 }
 static int paint(int navigation,int show){
- struct surface *s=&surfaces[navigation];int width=navigation?700:1280,cell=navigation?100:142;
+ struct surface *s=&surfaces[navigation];int width=navigation?800:1280,cell=navigation?100:142;
  if(!s->window&&show){
-  uint32_t desc[13]={0};desc[2]=width|(44u<<16);desc[3]=9;desc[5]=navigation?3:1;desc[7]=navigation?580:0;
+  uint32_t desc[13]={0};desc[2]=width|(44u<<16);desc[3]=9;desc[5]=navigation?3:1;desc[7]=navigation?480:0;
   int rc=((int(*)(void**,const void*))0x1a2634)(&s->window,desc);
   if(rc||!s->window){rx3_ui_failure[0]=1;rx3_ui_failure[1]=rc;rx3_ui_failure[2]=navigation;return 0;}
  }
