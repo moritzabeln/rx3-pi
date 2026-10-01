@@ -140,4 +140,20 @@ class Leds(unittest.TestCase):
   self.assertIn((0x90,0x0b,0x7f),sent);self.assertIn((0x90,0x0b,0),sent)
   self.assertEqual(alsa.written[-6:],bytes((0x90,0x0b,0,0x90,0x47,0)))
   self.assertEqual(alsa.closes,2)
+  self.assertTrue(alsa.written.startswith(self.b.query))
+ def test_position_query_without_leds_and_not_on_flx6(self):
+  import ctypes,errno
+  class Alsa:
+   written=b'';outputs=[]
+   def snd_rawmidi_open(self,handle,output,device,mode):
+    self.outputs.append(output is not None)
+    if output is not None:ctypes.cast(output,ctypes.POINTER(ctypes.c_void_p))[0]=0x1234
+    return 0
+   def snd_rawmidi_read(self,handle,buf,size):return -errno.EAGAIN
+   def snd_rawmidi_write(self,out,data,size):self.written+=bytes(data[:size]);return size
+   def snd_rawmidi_close(self,handle):pass
+  alsa=Alsa();reads=iter(range(2))
+  m.listen_reconnecting(self.b,alsa,lambda:next(reads,None) is not None,lambda:['hw:1,0,0'],lambda _:None)
+  self.assertEqual(alsa.written,self.b.query);self.assertEqual(alsa.outputs,[True])
+  flx=m.Bridge(self.f.name,lambda *e:None);self.assertIsNone(flx.query)
 if __name__=='__main__':unittest.main()

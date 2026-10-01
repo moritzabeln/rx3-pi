@@ -33,11 +33,13 @@ PROFILES={
   leds=dict(deck={1:(0x0b,0x47),2:(0x0c,0x48),4:(0x58,),7:(0x10,0x4c),8:(0x11,0x4e),9:(0x4d,0x50),50:(0x54,0x68)},
    # Active RX3 pad mode (HotCue, AutoBeatLoop, BeatJump LED) -> DDJ-400 pad note base.
    # meter_full: RX3 meter segment (of 11, -24..+14 dB) shown as a full DDJ-400 meter; 8 is ~+6 dB.
-   banks={14:0x00,15:0x60,17:0x20},pads=(0x97,0x99),common={51:(0x96,0x63)},meter=0x02,meter_full=8))}
+   banks={14:0x00,15:0x60,17:0x20},pads=(0x97,0x99),common={51:(0x96,0x63)},meter=0x02,meter_full=8),
+  # SysEx from Mixxx's DDJ-400 script: the controller replies with every knob and fader position.
+  query=bytes((0xf0,0x00,0x40,0x05,0x00,0x00,0x02,0x06,0x00,0x03,0x01,0xf7)))}
 class Bridge:
  def __init__(self,xml,emit,clock=time.monotonic,model='DDJ-FLX6'):
   profile=PROFILES[model];prefix=profile['prefix'];self.jog_scale=profile['jog_scale'];self.zoom_sign=profile['zoom_sign']
-  self.leds=profile['leds'];self.led_sent={}
+  self.leds=profile['leds'];self.led_sent={};self.query=profile.get('query')
   self.clock=clock;self.jogs={ch:dict(total=0,delta=0,last=clock(),moved=0,speed=0) for ch in (1,2)}
   self.emit=emit;self.mapping={};self.msb={};self.held=set();self.pad_held={};self.status=None;self.data=[]
   self.shift={1:False,2:False}
@@ -237,7 +239,7 @@ def listen_reconnecting(b,lib,running,discover,sleep=time.sleep,leds=None,clock=
   try:
    devices=discover()
    if len(devices)!=1:raise OSError(errno.ENODEV,'Expected one controller MIDI input')
-   rc=lib.snd_rawmidi_open(ctypes.byref(handle),ctypes.byref(out) if leds else None,devices[0].encode(),2)
+   rc=lib.snd_rawmidi_open(ctypes.byref(handle),ctypes.byref(out) if leds or b.query else None,devices[0].encode(),2)
    if rc<0:raise OSError(-rc,'Cannot open controller MIDI input')
   except (OSError,subprocess.SubprocessError) as e:
    if not waiting:print(f'Waiting for controller MIDI: {e}',flush=True)
@@ -252,6 +254,8 @@ def listen_reconnecting(b,lib,running,discover,sleep=time.sleep,leds=None,clock=
   b.led_reset();pending=b''
   if leds:leds.reset()
   try:
+   # The shim drains its queue only after applying startup defaults, so replies override them.
+   if b.query and out.value:lib.snd_rawmidi_write(out,b.query,len(b.query))
    while running():
     n=lib.snd_rawmidi_read(handle,buf,len(buf))
     if n>0:b.feed(buf.raw[:n])
@@ -270,8 +274,8 @@ def listen_reconnecting(b,lib,running,discover,sleep=time.sleep,leds=None,clock=
    try:b.release()
    finally:
     lib.snd_rawmidi_close(handle)
-    if leds and out.value:
-     off=b.led_off()
+    if out.value:
+     off=b.led_off() if leds else b''
      if off:lib.snd_rawmidi_write(out,off,len(off))
      lib.snd_rawmidi_close(out)
     # Never carry a partial message or old 14-bit MSB into a new connection.
