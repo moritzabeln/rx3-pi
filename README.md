@@ -77,7 +77,7 @@ Any rekordbox USB export (FAT32, containing `PIONEER/rekordbox/export.pdb`) is u
 uuid = 1234-ABCD
 ```
 
-To remove a stick, open **Source** on the touchscreen and touch **EJECT** (the RX3's USB STOP); unplug it once the player has released it. Unplugging without EJECT is handled, but a track playing from the stick stops. Hot-plug and EJECT mount with `sudo` from a background helper, so they need sudo without a password prompt (the default for Raspberry Pi OS's first user); otherwise a stick plugged in at start is used until `./rx3 stop`. Copying loose tracks is not a tested library workflow.
+To remove a stick, open **Source** on the touchscreen and touch **EJECT** (the RX3's USB STOP); unplug it once the player has released it. Unplugging without EJECT is handled, but a track playing from the stick stops. A background helper (`work/state/logs/usb.log`) does the mounting; `./rx3 start` runs it with the same sudo password prompt as the player. Copying loose tracks is not a tested library workflow.
 
 ```sh
 ./rx3 doctor

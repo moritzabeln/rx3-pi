@@ -10,7 +10,7 @@ from rx3tool import config
 from rx3tool.launch import Launcher, USB1, USB2
 from rx3tool.safefs import Tree
 from rx3tool.ui import Failure
-from rx3tool.usb import LIBRARIES, SLOTS, UsbWatcher, candidates, copy_library, migrate
+from rx3tool.usb import LIBRARIES, SLOTS, UsbWatcher, as_user, candidates, copy_library, migrate
 
 A, B = 'CA98-D2DE', '1234-ABCD'
 
@@ -51,12 +51,17 @@ class UsbTests(unittest.TestCase):
             {'path': '/dev/mmcblk0', 'fstype': None, 'uuid': None, 'hotplug': False, 'children': [
                 {'path': '/dev/mmcblk0p1', 'fstype': 'vfat', 'uuid': 'AAAA-BBBB', 'hotplug': False}]},
             {'path': '/dev/sda', 'fstype': None, 'uuid': None, 'hotplug': True, 'children': [
-                {'path': '/dev/sda1', 'fstype': 'vfat', 'uuid': A, 'hotplug': True},
+                {'path': '/dev/sda1', 'fstype': 'vfat', 'uuid': A},      # flag only on the disk
                 {'path': '/dev/sda2', 'fstype': 'ext4', 'uuid': 'deadbeef-0000', 'hotplug': True},
                 {'path': '/dev/sda3', 'fstype': 'exfat', 'uuid': '../../x', 'hotplug': True}]},
             {'path': '/dev/sdb1', 'fstype': 'exfat', 'uuid': B, 'hotplug': '1'}]})
         self.assertEqual(candidates(listing), {A: ('/dev/sda1', 'vfat'), B: ('/dev/sdb1', 'exfat')})
         self.assertEqual(candidates('not json'), {})
+        # A stick named in [usb] uuid is used even when its disk is not flagged as hot-pluggable.
+        listing = json.dumps({'blockdevices': [{'path': '/dev/sdc1', 'fstype': 'vfat', 'uuid': A, 'hotplug': False}]})
+        self.assertEqual(candidates(listing), {})
+        self.assertEqual(candidates(listing, A.lower()), {A: ('/dev/sdc1', 'vfat')})
+        self.assertEqual(candidates(listing, B), {})
 
     def test_plug_unplug_and_replug(self):
         present = {A: ('/dev/sda1', 'vfat')}
@@ -139,7 +144,7 @@ class UsbTests(unittest.TestCase):
         with Tree(self.runtime) as tree:
             migrate(tree, dst)
         self.assertEqual(list(dst.iterdir()), [])
-        self.assertEqual((self.runtime / LIBRARIES / A / 'PIONEER/rekordbox/export.pdb').read_bytes(), b'edited')
+        self.assertEqual((self.runtime / LIBRARIES / A.lower() / 'PIONEER/rekordbox/export.pdb').read_bytes(), b'edited')
         with Tree(self.runtime) as tree:
             migrate(tree, dst)                   # nothing left to move
         (dst / 'stray').write_text('x')
@@ -164,12 +169,33 @@ class UsbTests(unittest.TestCase):
     def test_helper_command_keeps_overrides_and_is_recognised(self):
         c = config.load(self.conf, [f'usb.uuid={A}'], env={})
         launcher = Launcher(c)
-        argv = [str(a) for a in launcher.usb_command()]
-        self.assertIn(f'usb.uuid={A}', argv)
-        self.assertEqual(argv[-3:], ['usb-watch', '--runtime', str(c.runtime)])
-        with patch('rx3tool.launch.processes', return_value=[(77, os.getuid(), argv, 'python3')]), \
+        inner = [str(a) for a in launcher.usb_command()]
+        self.assertIn(f'usb.uuid={A}', inner)
+        self.assertIn('-B', inner[:3])
+        self.assertEqual(inner[-3:], ['usb-watch', '--runtime', str(c.runtime)])
+        # ./rx3 start runs it through sudo, like the player; the root child is not ours to match.
+        argv = ['sudo', '-n', '--'] + inner
+        with patch('rx3tool.launch.processes', return_value=[(77, os.getuid(), argv, 'sudo'),
+                                                              (78, 0, inner, 'python3')]), \
                 patch('rx3tool.launch.player_pids', return_value=[]):
             self.assertEqual(launcher.helpers()['usb'], [77])
+        with patch.object(launcher, 'ensure_sudo'), patch.object(launcher, 'spawn') as spawn:
+            launcher.start_usb()
+        self.assertEqual(spawn.call_args[0][0], 'usb')
+        self.assertEqual([str(a) for a in spawn.call_args[0][1]], argv)
+
+    def test_as_user_is_a_no_op_for_an_unprivileged_helper(self):
+        with patch('rx3tool.usb.os.geteuid', return_value=1000), patch('rx3tool.usb.os.seteuid') as seteuid:
+            with as_user(1000, 1000):
+                pass
+        seteuid.assert_not_called()
+        calls = []
+        with patch('rx3tool.usb.os.geteuid', return_value=0), \
+                patch('rx3tool.usb.os.setegid', side_effect=lambda g: calls.append(('g', g))), \
+                patch('rx3tool.usb.os.seteuid', side_effect=lambda u: calls.append(('u', u))):
+            with as_user(1000, 44):
+                calls.append('inside')
+        self.assertEqual(calls, [('g', 44), ('u', 1000), 'inside', ('u', 0), ('g', 0)])
 
 
 if __name__ == '__main__':

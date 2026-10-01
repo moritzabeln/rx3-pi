@@ -69,12 +69,13 @@ class Launcher:
         show_command(argv, privileged=True, dry_run=self.dry_run)
         if self.dry_run:
             return subprocess.CompletedProcess(argv, 0, '', '')
+        prefix = [] if os.geteuid() == 0 else ['sudo', '-n', '--']
         self.ensure_sudo()
-        return subprocess.run(['sudo', '-n', '--'] + [str(a) for a in argv], check=check,
+        return subprocess.run(prefix + [str(a) for a in argv], check=check,
                               capture_output=capture, text=True)
 
     def ensure_sudo(self):
-        if self._sudo_ready or self.dry_run:
+        if self._sudo_ready or self.dry_run or os.geteuid() == 0:
             return
         if not shutil.which('sudo'):
             raise Failure('sudo is not installed', 'Install it as root: apt install sudo')
@@ -162,25 +163,21 @@ class Launcher:
                 if '--fifo' in argv and (argv.index('--fifo') + 1 < len(argv)
                                             and argv[argv.index('--fifo') + 1] == control):
                     found['midi'].append(pid)
-            elif exe.startswith('python') and len(argv) > 1 and os.path.basename(argv[1]) == 'rx3' \
+            elif exe == 'sudo' and argv[:3] == ['sudo', '-n', '--'] \
                     and argv[-3:] == ['usb-watch', '--runtime', runtime]:
                 found['usb'].append(pid)
         return found
 
     def start_usb(self):
-        """Hot-plug/EJECT helper; without passwordless sudo, use a USB that is plugged in now."""
-        # -k ignores this terminal's cached sudo; the helper runs without one.
-        if self.dry_run or subprocess.run(['sudo', '-n', '-k', 'true'], capture_output=True).returncode == 0:
-            self.spawn('usb', self.usb_command())
-            return
-        warn('USB hot-plug and EJECT need sudo without a password prompt',
-             'A rekordbox USB plugged in now is used until ./rx3 stop.')
-        from .usb import UsbWatcher
-        UsbWatcher(self.config, launcher=self).poll()
+        """The USB helper mounts and ejects while the player runs, so it runs as root like the
+        player: sudo's remembered password only covers children of this process."""
+        self.ensure_sudo()
+        self.spawn('usb', ['sudo', '-n', '--'] + self.usb_command())
 
     def usb_command(self):
         """The USB helper with the same settings, including --set overrides."""
-        argv = [sys.executable, REPO / 'rx3']
+        # -B: as root, do not leave root-owned bytecode in the checkout.
+        argv = [sys.executable, '-B', REPO / 'rx3']
         if self.config.source:
             argv += ['--config', self.config.source]
         for (section, key), origin in sorted(self.config.origin.items()):

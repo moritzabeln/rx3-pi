@@ -16,6 +16,7 @@ import select
 import stat
 import subprocess
 import time
+from contextlib import contextmanager
 
 from .launch import LIBRARY_PARTS, SUPPORTED_USB, USB1, USB2, USB_EJECT_FIFO as EJECT_FIFO, Launcher
 from .safefs import Tree
@@ -29,8 +30,12 @@ UUID_NAME = re.compile(r'^[0-9A-Fa-f][0-9A-Fa-f-]{3,35}$')
 DEVICE = re.compile(r'^/dev/[A-Za-z0-9_]+$')
 
 
-def candidates(listing=None):
-    """{uuid: (device, fstype)} for hot-plugged FAT32/exFAT filesystems."""
+def candidates(listing=None, wanted=''):
+    """{uuid: (device, fstype)} for FAT32/exFAT filesystems on hot-plugged disks.
+
+    A filesystem whose UUID is `wanted` (the [usb] uuid setting) is accepted even if the
+    system does not flag its disk as hot-pluggable.
+    """
     if listing is None:
         result = subprocess.run(['lsblk', '-J', '-o', 'PATH,FSTYPE,UUID,HOTPLUG'],
                                 capture_output=True, text=True)
@@ -38,29 +43,46 @@ def candidates(listing=None):
             return {}
         listing = result.stdout
     found = {}
-    def walk(items):
+    def walk(items, hotplug=False):
         for item in items or []:
-            yield item
-            yield from walk(item.get('children'))
+            # lsblk flags the disk; its partitions may not carry the flag themselves.
+            flagged = hotplug or item.get('hotplug') in (True, 1, '1')
+            yield item, flagged
+            yield from walk(item.get('children'), flagged)
     try:
         devices = list(walk(json.loads(listing).get('blockdevices')))
     except ValueError:
         return {}
-    for item in devices:
+    for item, hotplug in devices:
         uuid, device, fstype = item.get('uuid'), item.get('path'), item.get('fstype')
-        hotplug = item.get('hotplug') in (True, 1, '1')
-        if hotplug and fstype in SUPPORTED_USB and uuid and UUID_NAME.match(uuid) and device \
-                and DEVICE.match(device):
+        chosen = bool(wanted) and bool(uuid) and uuid.lower() == wanted.lower()
+        if (hotplug or chosen) and fstype in SUPPORTED_USB and uuid and UUID_NAME.match(uuid) \
+                and device and DEVICE.match(device):
             found[uuid] = (device, fstype)
     return found
 
 
+@contextmanager
+def as_user(uid, gid):
+    """Create files as the player's user while the helper runs as root (the player saves edits)."""
+    if os.geteuid() != 0:
+        yield
+        return
+    os.setegid(gid)
+    os.seteuid(uid)
+    try:
+        yield
+    finally:
+        os.seteuid(0)
+        os.setegid(0)
+
+
 class UsbWatcher:
-    def __init__(self, config, launcher=None, scan=candidates, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, config, launcher=None, scan=None, clock=time.monotonic, sleep=time.sleep):
         self.config = config
         self.launcher = launcher or Launcher(config)
         self.runtime = config.runtime
-        self.scan = scan
+        self.scan = scan or (lambda: candidates(wanted=self.config.get('usb', 'uuid')))
         self.clock = clock
         self.sleep = sleep
         self.current = None      # uuid shown to the player
@@ -130,15 +152,16 @@ class UsbWatcher:
         dst = launcher.check_target(USB2)
         if mount_at(dst):
             raise Failure(f'{dst} is already mounted; left unchanged')
-        store = f'{LIBRARIES}/{uuid}'
-        with Tree(self.runtime) as tree:
+        store = f'{LIBRARIES}/{uuid.lower()}'
+        with as_user(self.config.uid(), self.config.gid()), Tree(self.runtime) as tree:
             migrate(tree, dst)
             tree.mkdir(LIBRARIES, 0o700)
             tree.mkdir(store, 0o755)
             if tree.lstat(f'{store}/{STAMP}') is None:
-                tree.write(f'{store}/{STAMP}', (uuid + '\n').encode(), 0o600)
+                tree.write(f'{store}/{STAMP}', (uuid.lower() + '\n').encode(), 0o600)
         launcher.bind(launcher.rt(store), USB2)
-        copied = copy_library(self.runtime, launcher.rt(USB1), USB2)
+        with as_user(self.config.uid(), self.config.gid()):
+            copied = copy_library(self.runtime, launcher.rt(USB1), USB2)
         for part in LIBRARY_PARTS:
             if (launcher.rt(USB1) / part).is_dir():
                 launcher.bind(launcher.rt(USB1) / part, f'{USB2}/{part}', readonly=True)
@@ -224,7 +247,10 @@ class UsbWatcher:
             return 1
         self.open_fifo()
         self.adopt()
-        say('Watching for rekordbox USBs (FAT32/exFAT with PIONEER/rekordbox/export.pdb)')
+        wanted = self.config.get('usb', 'uuid')
+        say('Watching for rekordbox USBs (FAT32/exFAT with PIONEER/rekordbox/export.pdb)'
+            + (f', only {wanted}' if wanted else ''))
+        info('USB filesystems visible now: ' + (', '.join(sorted(self.scan())) or 'none'))
         while running():
             requested = self.requests(interval)
             if requested:
@@ -240,7 +266,7 @@ def migrate(tree, dst):
             raise Failure(f'{dst} holds files without a USB UUID record; left unchanged')
         return
     with tree.open_read(f'{USB2}/{STAMP}') as handle:
-        uuid = handle.read().decode().strip()
+        uuid = handle.read().decode().strip().lower()
     if not UUID_NAME.match(uuid):
         raise Failure(f'{dst} has an invalid USB UUID record; left unchanged')
     tree.mkdir(LIBRARIES, 0o700)
