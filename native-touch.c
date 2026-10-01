@@ -116,6 +116,17 @@ static void native_touch(void *handler,const struct touch *t,void *mode){
    int index=mixer_slider_at(t->x,t->y);
    if(index>=0){held_slider=index;slider(handler,held_slider,t->x,t->y);}
    else if(t->y>=694&&t->y<764&&((t->x>=32&&t->x<432)||(t->x>=848&&t->x<1248))){held_key=0x5020;held_channel=t->x<640?1:2;pad_key(handler,held_key,0,held_channel);}
+   else if(t->y>=694&&t->y<764&&t->x>=480&&t->x<800){
+    held_key=-1;
+    void *engine=*(void *volatile *)0x0268617c;
+    if(engine){
+     int off=!rx3_crossfader_off;
+     /* Native assignment0 bypasses the crossfader; 1/2 restore deck A/B. */
+     ((void (*)(void*,int,int))0x4cc0c)(engine,0,off?0:1);
+     ((void (*)(void*,int,int))0x4cc0c)(engine,1,off?0:2);
+     rx3_crossfader_off=off;
+    }
+   }
    else held_key=-1; /* Consume blank-panel gestures through release. */
    return;
   }

@@ -5,8 +5,9 @@
 #include "native-mixer-layout.h"
 #include "native-mixer-glyphs.h"
 volatile int rx3_mixer_visible;
+volatile int rx3_crossfader_off;
 static void *window;
-static int shown,disabled,painted;
+static int shown,disabled,painted,last_xf_off;
 static uint32_t revision;
 static int last_tempo[2],last_range[2],last_lock[2],last_pickup[2];
 static unsigned last_bpm[2];
@@ -71,7 +72,8 @@ void rx3_mixer_draw(int main_visible){
  unsigned bpm[2]={((unsigned(*)(int))0xfd1fc)(0),((unsigned(*)(int))0xfd1fc)(1)};
  int range[2]={((int(*)(int))0xfd2b4)(0),((int(*)(int))0xfd2b4)(1)};
  int keylock[2]={((int(*)(int))0xfd30c)(0),((int(*)(int))0xfd30c)(1)};
- if(painted&&pickup[0]==last_pickup[0]&&pickup[1]==last_pickup[1]&&bpm[0]==last_bpm[0]&&bpm[1]==last_bpm[1]&&revision==state.revision&&tempo[0]==last_tempo[0]&&tempo[1]==last_tempo[1]&&range[0]==last_range[0]&&range[1]==last_range[1]&&keylock[0]==last_lock[0]&&keylock[1]==last_lock[1])return;
+ int xf_off=rx3_crossfader_off;
+ if(painted&&xf_off==last_xf_off&&pickup[0]==last_pickup[0]&&pickup[1]==last_pickup[1]&&bpm[0]==last_bpm[0]&&bpm[1]==last_bpm[1]&&revision==state.revision&&tempo[0]==last_tempo[0]&&tempo[1]==last_tempo[1]&&range[0]==last_range[0]&&range[1]==last_range[1]&&keylock[0]==last_lock[0]&&keylock[1]==last_lock[1])return;
  for(unsigned i=0;i<1280*756;i++)canvas[i]=0x1082;
  box(0,0,480,54,0x018e);box(480,0,320,54,0x2945);box(800,0,480,54,0x018e);
  for(int deck=0;deck<2;deck++){
@@ -106,11 +108,17 @@ void rx3_mixer_draw(int main_visible){
  if(state.valid&(1u<<7)){
   float v=state.levels[7];if(v<0)v=0;if(v>1)v=1;
   int x=80+(int)(v*1120+.5f);
-  box(80,604,x-80,8,0x04bf);box(x-10,592,20,32,0xe73c);
+  box(80,604,x-80,8,xf_off?0x528a:0x04bf);box(x-10,592,20,32,xf_off?0x8410:0xe73c);
  }
  box(32,650,400,70,state.cue&1?0x04bf:0x4208);
+ box(480,650,320,70,xf_off?0x4208:0x04bf);
  box(848,650,400,70,state.cue&2?0x04bf:0x4208);
- for(unsigned i=0;i<sizeof(mixer_text)/sizeof(mixer_text[0]);i++)box(mixer_text[i][0],mixer_text[i][1],mixer_text[i][2],1,0xffff);
+ for(unsigned i=0;i<sizeof(mixer_text)/sizeof(mixer_text[0]);i++){
+  box(mixer_text[i][0],mixer_text[i][1],mixer_text[i][2],1,0xffff);
+  /* Reuse the CROSSFADER caption spans as the toggle button label. */
+  if(mixer_text[i][0]>=480&&mixer_text[i][0]<800&&mixer_text[i][1]>=560&&mixer_text[i][1]<592)
+   box(mixer_text[i][0],mixer_text[i][1]+109,mixer_text[i][2],1,0xffff);
+ }
  void *pixels=0;int pitch=0;
  int rc=((int(*)(void*,void**,int*))0x1a1c48)(window,&pixels,&pitch);
  if(rc)return;
@@ -121,7 +129,7 @@ void rx3_mixer_draw(int main_visible){
  }
  ((int(*)(void*))0x1a1cb0)(window);
  ((int(*)(void*,int,int,int,int,int))0x1a0948)(window,0,0,1280,756,0x4000);
- revision=state.revision;last_tempo[0]=tempo[0];last_tempo[1]=tempo[1];
+ revision=state.revision;last_xf_off=xf_off;last_tempo[0]=tempo[0];last_tempo[1]=tempo[1];
  for(int i=0;i<2;i++){last_pickup[i]=pickup[i];last_bpm[i]=bpm[i];last_range[i]=range[i];last_lock[i]=keylock[i];}
  painted=1;
 }
