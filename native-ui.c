@@ -59,7 +59,9 @@ static int paint(int navigation,int show){
   ((int(*)(void*,unsigned))0x1a0a28)(s->window,show?255:0);s->shown=show;s->painted=0;
  }
  if(!show)return 1;
- int tag_list=navigation&&((int(*)(void))0x1126d0)()==4;
+ int browse_mode=navigation?((int(*)(void))0x1126d0)():0;
+ /* Cell 2: TAG + in Browse, TAG - in Tag List, EJECT in Source (device) view. */
+ int tag_list=browse_mode==4?1:browse_mode==12?2:0;
  int pressed=rx3_native_ui_pressed-(navigation?10:0);
  if(s->painted&&s->last_pressed==pressed&&s->last_tag_list==tag_list)return 1;
  void *pixels=0;int pitch=0;
@@ -76,8 +78,8 @@ static int paint(int navigation,int show){
  for(unsigned i=0;i<count;i++)for(unsigned x=spans[i][0];x<spans[i][0]+spans[i][2];x++)
   ((uint16_t*)((char*)pixels+spans[i][1]*pitch))[x]=0xffff;
  if(navigation){
-  const unsigned short (*tag)[3]=tag_list?navigation_tag_remove_spans:navigation_tag_add_spans;
-  unsigned n=tag_list?sizeof(navigation_tag_remove_spans)/sizeof(tag[0]):sizeof(navigation_tag_add_spans)/sizeof(tag[0]);
+  const unsigned short (*tag)[3]=tag_list==2?navigation_eject_spans:tag_list?navigation_tag_remove_spans:navigation_tag_add_spans;
+  unsigned n=tag_list==2?sizeof(navigation_eject_spans)/sizeof(tag[0]):tag_list?sizeof(navigation_tag_remove_spans)/sizeof(tag[0]):sizeof(navigation_tag_add_spans)/sizeof(tag[0]);
   for(unsigned i=0;i<n;i++)for(unsigned x=tag[i][0];x<tag[i][0]+tag[i][2];x++)
    ((uint16_t*)((char*)pixels+tag[i][1]*pitch))[x]=0xffff;
  }

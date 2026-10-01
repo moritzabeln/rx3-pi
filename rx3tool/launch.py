@@ -21,7 +21,7 @@ from pathlib import Path
 from . import REPO
 from .assemble import read_marker
 from .safefs import Tree, real_directory_chain
-from .system import mount_at, mounts, player_pids, processes, runtime_mounts
+from .system import mount_at, player_pids, processes, runtime_mounts
 from .ui import Failure, info, ok, say, show_command, stage, warn
 
 FRAME_BYTES = 4096 + 2 * 1280 * 800 * 4
@@ -30,8 +30,9 @@ BIND_DEVICES = ['null', 'zero', 'urandom', 'full']
 USB1 = 'media/usb1/sda1'
 USB2 = 'media/usb2/sdb1'
 LIBRARY_PARTS = ['Contents', 'Music', 'PIONEER/Artwork']
-STOP_ORDER = ['midi', 'touch', 'player', 'display']
+STOP_ORDER = ['usb', 'midi', 'touch', 'player', 'display']
 SUPPORTED_USB = {'vfat': 'tested', 'exfat': 'untested'}
+USB_EJECT_FIFO = 'dev/rx3-usb-eject'
 
 
 class Launcher:
@@ -123,132 +124,6 @@ class Launcher:
         # Keep the emulated /proc files; only ALSA's subtree comes from the host.
         self.bind('/proc/asound', 'proc/asound')
         ok('Device and ALSA bind mounts ready')
-        return self.prepare_usb()
-
-    def usb_device(self):
-        uuid = self.config.get('usb', 'uuid')
-        if not uuid:
-            return None, None
-        device = Path('/dev/disk/by-uuid') / uuid
-        if not device.exists():
-            return uuid, None
-        return uuid, device
-
-    def usb_fstype(self, device):
-        result = subprocess.run(['lsblk', '-no', 'FSTYPE', str(device)], capture_output=True, text=True)
-        return result.stdout.strip().splitlines()[0] if result.returncode == 0 and result.stdout.strip() else ''
-
-    def prepare_usb(self):
-        uuid, device = self.usb_device()
-        if not uuid:
-            info('No music USB configured ([usb] uuid is empty); the player starts without media.')
-            return False
-        target = self.check_target(USB1)
-        current = mount_at(target)
-        if current:
-            actual = subprocess.run(['findmnt', '-n', '-o', 'UUID', '-M', str(target)],
-                                    capture_output=True, text=True).stdout.strip()
-            if actual.lower() != uuid.lower():
-                raise Failure(f'A different filesystem is mounted at {target}; left unchanged')
-            if 'ro' not in current['options']:
-                raise Failure(f'The music USB is mounted writable at {target}; left unchanged',
-                              'Stop RX3 (./rx3 stop) so it can be mounted read-only again.')
-            ok(f'Music USB {uuid} already mounted read-only')
-        elif device is None:
-            warn(f'Music USB {uuid} is not connected; starting without media')
-            return False
-        else:
-            fstype = self.usb_fstype(device)
-            if fstype not in SUPPORTED_USB:
-                raise Failure(f'The music USB uses {fstype or "an unknown filesystem"}, which is not supported',
-                              'Supported: FAT32 (vfat, tested) and exFAT (untested). '
-                              'rekordbox USB exports are normally FAT32.')
-            if SUPPORTED_USB[fstype] == 'untested':
-                warn(f'{fstype} music USBs have not been tested with this runtime')
-            host = [m for m in mounts() if m['root'] == '/' and not
-                    (m['target'] == str(self.runtime) or m['target'].startswith(str(self.runtime) + '/'))
-                    and os.path.realpath(m['source']) == os.path.realpath(device)]
-            if host:
-                options = host[0]['options']
-                if fstype == 'vfat' and not ({'utf8', 'utf8=1', 'iocharset=utf8'} & options):
-                    raise Failure(f'The USB is already mounted at {host[0]["target"]} without UTF-8 file names',
-                                  'Unmount it in the desktop (eject) and run ./rx3 start again.')
-                self.bind(host[0]['target'], USB1, readonly=True)
-            else:
-                uid, gid = self.config.uid(), self.config.gid()
-                charset = 'utf8=1' if fstype == 'vfat' else 'iocharset=utf8'
-                self.sudo(['mount', '-t', fstype, '-o',
-                           f'ro,uid={uid},gid={gid},{charset},nosuid,nodev,noexec', device, target])
-            ok(f'Music USB {uuid} mounted read-only at {USB1} inside the runtime')
-        if not self.dry_run:
-            self.prepare_library()
-        return True
-
-    def prepare_library(self):
-        """Writable local copy of the rekordbox database/analysis; music stays read-only."""
-        src = self.rt(USB1)
-        dst_rel = USB2
-        dst = self.check_target(dst_rel)
-        if mount_at(dst):
-            raise Failure(f'{dst} is itself a mount point; inspect before replacing it')
-        copied = 0
-        with Tree(self.runtime) as tree:
-            stamp = f'{dst_rel}/.rx3-usb-uuid'
-            uuid = self.config.get('usb', 'uuid').lower()
-            if tree.lstat(stamp) is not None:
-                with tree.open_read(stamp) as handle:
-                    previous = handle.read().decode().strip()
-                if previous != uuid:
-                    raise Failure('This runtime holds a library copy from a different USB',
-                                  'Keep this runtime to preserve edits. Configure a new runtime directory, '
-                                  'then run ./rx3 assemble, build and install for the new USB.')
-            elif any(dst.iterdir()):
-                raise Failure('Existing local USB library has no UUID record; left unchanged',
-                              'Use a new runtime directory so existing library edits are preserved.')
-            else:
-                tree.write(stamp, (uuid + '\n').encode(), 0o600)
-            db = src / 'PIONEER' / 'rekordbox'
-            if db.is_dir():
-                for item in sorted(db.iterdir()):
-                    rel = f'{dst_rel}/PIONEER/rekordbox/{item.name}'
-                    if item.is_file() and not item.is_symlink() and tree.lstat(rel) is None:
-                        with item.open('rb') as handle:
-                            tree.write(rel, handle, 0o644)
-                        copied += 1
-            pioneer = src / 'PIONEER'
-            if pioneer.is_dir():
-                for item in sorted(pioneer.iterdir()):
-                    rel = f'{dst_rel}/PIONEER/{item.name}'
-                    if item.is_file() and not item.is_symlink() and tree.lstat(rel) is None:
-                        with item.open('rb') as handle:
-                            tree.write(rel, handle, 0o644)
-                        copied += 1
-            for part in LIBRARY_PARTS:
-                if (src / part).is_dir():
-                    tree.mkdir(f'{dst_rel}/{part}', 0o755)
-            analysis = src / 'PIONEER' / 'USBANLZ'
-            tree.mkdir(f'{dst_rel}/PIONEER/USBANLZ', 0o755)
-            if analysis.is_dir():
-                for folder, dirs, files in os.walk(analysis):
-                    dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(folder, d)))
-                    rel_folder = os.path.relpath(folder, analysis)
-                    base = f'{dst_rel}/PIONEER/USBANLZ' + ('' if rel_folder == '.' else f'/{rel_folder}')
-                    tree.mkdir(base, 0o755)
-                    for name in sorted(files):
-                        path = os.path.join(folder, name)
-                        # Never overwrite: the player saves cue/grid edits into these copies.
-                        if not os.path.islink(path) and tree.lstat(f'{base}/{name}') is None:
-                            with open(path, 'rb') as handle:
-                                tree.write(f'{base}/{name}', handle, 0o644)
-                            copied += 1
-                            if copied % 500 == 0:
-                                info(f'{copied} library files copied ...')
-        for part in LIBRARY_PARTS:
-            if (src / part).is_dir():
-                self.bind(src / part, f'{dst_rel}/{part}', readonly=True)
-        if not (dst / 'PIONEER' / 'rekordbox').is_dir():
-            warn('The USB has no PIONEER/rekordbox folder; export your library with rekordbox first')
-        ok(f'Local library view ready ({copied} new files copied; existing edits kept)')
 
     def unmount_all(self):
         targets = runtime_mounts(self.runtime)
@@ -287,7 +162,31 @@ class Launcher:
                 if '--fifo' in argv and (argv.index('--fifo') + 1 < len(argv)
                                             and argv[argv.index('--fifo') + 1] == control):
                     found['midi'].append(pid)
+            elif exe.startswith('python') and len(argv) > 1 and os.path.basename(argv[1]) == 'rx3' \
+                    and argv[-3:] == ['usb-watch', '--runtime', runtime]:
+                found['usb'].append(pid)
         return found
+
+    def start_usb(self):
+        """Hot-plug/EJECT helper; without passwordless sudo, use a USB that is plugged in now."""
+        # -k ignores this terminal's cached sudo; the helper runs without one.
+        if self.dry_run or subprocess.run(['sudo', '-n', '-k', 'true'], capture_output=True).returncode == 0:
+            self.spawn('usb', self.usb_command())
+            return
+        warn('USB hot-plug and EJECT need sudo without a password prompt',
+             'A rekordbox USB plugged in now is used until ./rx3 stop.')
+        from .usb import UsbWatcher
+        UsbWatcher(self.config, launcher=self).poll()
+
+    def usb_command(self):
+        """The USB helper with the same settings, including --set overrides."""
+        argv = [sys.executable, REPO / 'rx3']
+        if self.config.source:
+            argv += ['--config', self.config.source]
+        for (section, key), origin in sorted(self.config.origin.items()):
+            if origin == '--set':
+                argv += ['--set', f'{section}.{key}={self.config.get(section, key)}']
+        return argv + ['usb-watch', '--runtime', str(self.runtime)]
 
     def spawn(self, name, argv, env=None):
         log = self.logs / f'{name}.log'
@@ -349,14 +248,14 @@ class Launcher:
         with self.lock():
             running = self.helpers()
             new_player = not running['player']
-            usb = False
             if new_player:
-                usb = self.prepare_mounts()
+                self.prepare_mounts()
                 if not self.dry_run:
                     with Tree(self.runtime) as tree:
                         tree.sparse_file('dev/rx3-present-frame', FRAME_BYTES, 0o600)
                         tree.sparse_file('dev/rx3-led-state', 4096, 0o600)
                         tree.write('dev/rx3-ui-state', UI_STATE, 0o600)
+                        tree.fifo(USB_EJECT_FIFO, 0o600)
                 stage('Starting the player')
                 if not self.dry_run:
                     self.ensure_sudo()
@@ -383,9 +282,12 @@ class Launcher:
                                     '--player-id', ('dry-run' if self.dry_run else str(player_process.pid)
                                                     if new_player else str(running['player'][0]))], env)
             if self.dry_run:
+                self.start_usb()
                 return
             if not new_player:
-                say('RX3 already running; restored any missing display, touch and MIDI helpers.')
+                if not running['usb']:
+                    self.start_usb()
+                say('RX3 already running; restored any missing display, touch, MIDI and USB helpers.')
                 return
             stage('Waiting for the player to initialise')
             # Storage workers start after the display; USB events before then are lost.
@@ -402,11 +304,10 @@ class Launcher:
                 tail = log_tail(self.logs / 'player.log')
                 raise Failure(f'The player exited during startup ({how})',
                               'Last lines of the player log:\n' + tail)
-            if usb:
-                self.notify('proc/udev_usb1', b'mount /media/usb1/sda1')
-                if mount_at(self.rt(USB2 + '/Contents')):
-                    self.notify('proc/udev_usb2', b'mount /media/usb2/sdb1')
-            missing = [kind for kind, pids in self.helpers().items() if kind != 'player' and not pids]
+            # The player reads USB events only once its storage workers run.
+            self.start_usb()
+            found = self.helpers()
+            missing = [kind for kind, pids in found.items() if kind not in ('player', 'usb') and not pids]
             if missing:
                 raise Failure('Helpers exited: ' + ', '.join(missing),
                               f'Inspect logs in {self.logs}; run ./rx3 stop before retrying.')
@@ -461,7 +362,7 @@ class Launcher:
     def status(self):
         found = self.helpers()
         say(f'Runtime: {self.runtime}')
-        for kind in ('player', 'display', 'touch', 'midi'):
+        for kind in ('player', 'display', 'touch', 'midi', 'usb'):
             pids = found[kind]
             say(f'  {kind:8} ' + (f'running (process {", ".join(map(str, pids))})' if pids else 'stopped'))
         targets = runtime_mounts(self.runtime)

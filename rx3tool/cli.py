@@ -125,6 +125,8 @@ def main(argv=None):
     stop.add_argument('--keep-mounts', action='store_true', help='leave the runtime mounts in place')
     stop.add_argument('--dry-run', action='store_true')
     command('status', 'show which RX3 processes and mounts are active')
+    usb = command('usb-watch', 'USB hot-plug/eject helper (started by ./rx3 start)')
+    usb.add_argument('--runtime', help='runtime path, used to identify this helper')
     selftest_parser = command('selftest', 'run the offline tests (no firmware or hardware needed)')
     selftest_parser.add_argument('-v', '--verbose', action='store_true')
 
@@ -177,6 +179,14 @@ def run(args):
         return Doctor(config, ('runtime',)).run()
     elif args.command == 'setup':
         return setup(config, args)
+    elif args.command == 'usb-watch':
+        import signal
+        from .usb import main as usb_main
+        def stop(*_):
+            raise KeyboardInterrupt
+        # Interrupt a long library copy too; Tree.write removes partial files.
+        signal.signal(signal.SIGTERM, stop)
+        return usb_main(config)
     elif args.command in ('start', 'stop', 'status'):
         from .launch import Launcher
         launcher = Launcher(config, getattr(args, 'dry_run', False))

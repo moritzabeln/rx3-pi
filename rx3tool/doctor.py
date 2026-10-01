@@ -422,6 +422,7 @@ class Doctor:
                 self.ok('sudo works without a prompt')
             else:
                 info('./rx3 start will ask for your password for the mount/chroot steps.')
+                info('USB hot-plug and EJECT need sudo without a password; a USB plugged in at start still works.')
         missing_build = [n for n in ('rx3-fb-present', 'rx3-touch-bridge', 'fbshim.so')
                          if not (config.build / n).is_file()]
         if missing_build:
@@ -468,7 +469,7 @@ class Doctor:
             except ValueError:
                 pass
         if not uuid:
-            info('No music USB configured ([usb] uuid is empty); RX3 will start without media.')
+            info('[usb] uuid is empty: any rekordbox USB is used, also when plugged in while RX3 runs.')
             for found_uuid, fstype, point in candidates:
                 info(f'rekordbox USB found: uuid = {found_uuid} ({fstype}, mounted at {point})')
             return

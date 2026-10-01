@@ -69,6 +69,12 @@ static void native_touch(void *handler,const struct touch *t,void *mode){
     return_from_source=i==3&&browse_mode==12;
     if(i==3&&tag_list)held_key=0x203; /* Close Tag List directly to player. */
     if(i==1&&tag_list){held_key=-1;return;}
+    /* Source view: EJECT holds USB STOP on both slots (one stick is mounted as USB1 and USB2). */
+    if(i==2&&browse_mode==12){
+     held_key=-1;
+     for(int slot=1;slot<=2;slot++)for(int op=0;op<=2;op++)pad_key(handler,0x8002,op,slot);
+     return;
+    }
     pad_key(handler,held_key,0,0);
     if(i==2&&tag_list)pad_key(handler,held_key,1,0);
     return;

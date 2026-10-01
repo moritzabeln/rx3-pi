@@ -12,7 +12,7 @@ from rx3tool import config, system
 from rx3tool.assemble import Assembler, MARKER, FORMAT, extract_tar, read_marker, write_marker
 from rx3tool.cli import main
 from rx3tool.cramfs import Image, MAGIC
-from rx3tool.launch import Launcher, USB1, USB2
+from rx3tool.launch import Launcher
 from rx3tool.mapping import ensure
 from rx3tool.recover import Recovery
 from rx3tool.safefs import Tree
@@ -108,11 +108,13 @@ class SetupTests(unittest.TestCase):
         c = config.load(self.conf, ['controller.mapping=map.xml'], env={})
         launch = Launcher(c)
         process = MagicMock(); process.poll.return_value = None
-        stopped = {k: [] for k in ('player', 'display', 'touch', 'midi')}
+        stopped = {k: [] for k in ('player', 'display', 'touch', 'midi', 'usb')}
         started = {k: [123] for k in stopped}
-        with patch.object(launch, 'preflight', return_value=('/dev/dri/card0','test','/dev/input/event0','test',self.root/'map.xml')), patch.object(launch, 'prepare_mounts', return_value=False), patch.object(launch, 'helpers', side_effect=[stopped, started]), patch.object(launch, 'ensure_sudo'), patch.object(launch, 'spawn', return_value=process), patch('rx3tool.launch.Tree') as tree, patch('rx3tool.launch.time.monotonic', side_effect=[0, 1, 11]), patch('rx3tool.launch.time.sleep') as sleep, patch('rx3tool.launch.player_pids', return_value=[]):
+        with patch.object(launch, 'preflight', return_value=('/dev/dri/card0','test','/dev/input/event0','test',self.root/'map.xml')), patch.object(launch, 'prepare_mounts', return_value=False), patch.object(launch, 'helpers', side_effect=[stopped, started]), patch.object(launch, 'ensure_sudo'), patch.object(launch, 'start_usb') as start_usb, patch.object(launch, 'spawn', return_value=process), patch('rx3tool.launch.Tree') as tree, patch('rx3tool.launch.time.monotonic', side_effect=[0, 1, 11]), patch('rx3tool.launch.time.sleep') as sleep, patch('rx3tool.launch.player_pids', return_value=[]):
             launch.start()
             sleep.assert_called_once_with(.5)
+            # USB events are only read once the player has initialised.
+            start_usb.assert_called_once_with()
         self.assertGreaterEqual(process.poll.call_count, 2)
 
     def test_unknown_player_and_other_midi_are_not_stopped(self):
@@ -136,14 +138,6 @@ class SetupTests(unittest.TestCase):
         with patch('rx3tool.system.processes', return_value=[(123, 1000, [str(a) for a in argv], 'sudo')]):
             self.assertEqual(system.player_pids(self.cfg.runtime), [123])
             self.assertEqual(system.player_pids(self.root / 'other'), [])
-
-    def test_changed_usb_preserves_local_library(self):
-        (self.cfg.runtime / USB1).mkdir(parents=True)
-        dst = self.cfg.runtime / USB2; dst.mkdir(parents=True)
-        (dst / '.rx3-usb-uuid').write_text('aaaa-bbbb\n')
-        c = config.load(self.conf, ['usb.uuid=cccc-dddd'], env={})
-        with self.assertRaisesRegex(Failure, 'different USB'): Launcher(c).prepare_library()
-        self.assertEqual((dst / '.rx3-usb-uuid').read_text(), 'aaaa-bbbb\n')
 
     def test_mapping_checksum_failure_writes_nothing(self):
         c = config.load(self.conf, ['controller.mapping=map.xml'], env={})

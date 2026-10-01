@@ -70,14 +70,14 @@ Find your USB UUID:
 lsblk -o NAME,FSTYPE,UUID,LABEL,MOUNTPOINTS
 ```
 
-Edit `rx3.conf` and put the music partition's UUID in `[usb]`:
+Any rekordbox USB export (FAT32, containing `PIONEER/rekordbox/export.pdb`) is used, whether it is plugged in before `./rx3 start` or while RX3 runs. To use only one particular stick, put its UUID in `rx3.conf`:
 
 ```ini
 [usb]
 uuid = 1234-ABCD
 ```
 
-Leave it empty to boot without music. Use a rekordbox USB export containing `PIONEER/rekordbox/export.pdb`; copying loose tracks is not a tested library workflow.
+To remove a stick, open **Source** on the touchscreen and touch **EJECT** (the RX3's USB STOP); unplug it once the player has released it. Unplugging without EJECT is handled, but a track playing from the stick stops. Hot-plug and EJECT mount with `sudo` from a background helper, so they need sudo without a password prompt (the default for Raspberry Pi OS's first user); otherwise a stick plugged in at start is used until `./rx3 stop`. Copying loose tracks is not a tested library workflow.
 
 ```sh
 ./rx3 doctor
@@ -94,7 +94,7 @@ To stop and release the devices/mounts:
 ./rx3 stop
 ```
 
-The USB is mounted **read-only inside the RX3 runtime**. Database/analysis files are copied to `work/runtime/media/usb2/sdb1`, preserving local cue/grid edits on later starts. Music stays on the USB; the supported music folders are `Contents`, `Music` and `PIONEER/Artwork`. This does not write edits back to the original USB. Changing USB UUID requires a separate runtime to avoid mixing two databases. Re-exporting the same USB does not automatically refresh existing local database/analysis files; keep the existing runtime as an edits backup and build a new runtime for a refreshed export.
+The USB is mounted **read-only inside the RX3 runtime** and shown to the player as USB1; USB2 is a local copy of its database/analysis files in `work/runtime/media/usb2/.rx3-libraries/<UUID>`, preserving local cue/grid edits on later starts. Each stick has its own copy, so databases never mix. Music stays on the USB; the supported music folders are `Contents`, `Music` and `PIONEER/Artwork`. This does not write edits back to the original USB. Re-exporting the same USB does not automatically refresh existing local database/analysis files; move that stick's folder away to start from the new export.
 
 ## Settings and individual steps
 

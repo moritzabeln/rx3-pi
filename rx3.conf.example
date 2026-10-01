@@ -67,8 +67,10 @@ mapping = work/Pioneer-DDJ-FLX6.midi.xml
 # mapping = work/Pioneer-DDJ-400.midi.xml
 
 [usb]
-# Filesystem UUID of your rekordbox USB (FAT32), shown by:
+# Empty = use any rekordbox USB (FAT32/exFAT with PIONEER/rekordbox/export.pdb),
+# plugged in before or while RX3 runs; eject it with EJECT in the Source view.
+# Or a filesystem UUID to use only that stick, shown by:
 #   lsblk -o NAME,FSTYPE,UUID,LABEL,MOUNTPOINTS
-# Empty = start without music. It is mounted read-only inside the runtime;
-# the database/analysis are copied to a local, writable view.
+# The stick is mounted read-only inside the runtime; its database/analysis are
+# copied to a local, writable view kept per stick.
 uuid =
