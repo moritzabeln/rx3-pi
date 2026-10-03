@@ -11,6 +11,7 @@
 #define RX3_LED_LIT 1
 #define RX3_LED_ACTIVE 2
 #define RX3_LED_DIM 4
+#define RX3_LED_BLINK 8
 #define RX3_LED_LEVEL_METER 54
 /* Player pointers are 32-bit; host tests set a base for their arena. */
 #ifndef RX3_LED_BASE
@@ -33,7 +34,8 @@ static int rx3_led_blink_on(const uint8_t *r,long long now){
  uint32_t period=*(const uint32_t*)(r+28),start=*(const uint32_t*)(r+32);
  return !period||(((unsigned long long)(now-(long long)start)/period)&1)==0;
 }
-/* RX3_LED_ACTIVE: lit or blinking; RX3_LED_LIT: lit at this moment; RX3_LED_DIM: reduced brightness. */
+/* RX3_LED_ACTIVE: lit or blinking; RX3_LED_LIT: lit at this moment; RX3_LED_DIM: reduced brightness;
+ * RX3_LED_BLINK: blinking rather than steady (e.g. Beat FX ON/OFF while the effect is on). */
 static uint8_t rx3_led_value(const uint8_t *ls,uint32_t id,uint32_t ch,long long now){
  const uint8_t *r=rx3_led_record(ls,id,ch);
  if(!r)return 0;
@@ -41,7 +43,7 @@ static uint8_t rx3_led_value(const uint8_t *ls,uint32_t id,uint32_t ch,long long
  uint8_t dim=*(const uint32_t*)(r+20)?RX3_LED_DIM:0;
  if(state==1)return RX3_LED_ACTIVE|RX3_LED_LIT|dim;
  if(state==3)r=rx3_led_record(ls,*(const uint32_t*)(r+8),*(const uint32_t*)(r+12));
- if(r&&*(const uint32_t*)(r+16)==2)return RX3_LED_ACTIVE|(rx3_led_blink_on(r,now)?RX3_LED_LIT:0)|dim;
+ if(r&&*(const uint32_t*)(r+16)==2)return RX3_LED_ACTIVE|RX3_LED_BLINK|(rx3_led_blink_on(r,now)?RX3_LED_LIT:0)|dim;
  return 0;
 }
 /* Lit segments of a level meter bar (the RX3 has 11, -24 to +14 dB); the peak-hold bit is ignored. */

@@ -32,11 +32,12 @@ int main(void){
  assert(rx3_led_level(ls,2)==0);
  assert(rx3_led_value(ls,1,1,0)==(RX3_LED_ACTIVE|RX3_LED_LIT));
  assert(rx3_led_value(ls,1,0,0)==(RX3_LED_ACTIVE|RX3_LED_LIT));
- assert(rx3_led_value(ls,1,2,1200)==(RX3_LED_ACTIVE|RX3_LED_LIT));
- assert(rx3_led_value(ls,1,2,1600)==RX3_LED_ACTIVE);
- assert(rx3_led_value(ls,1,2,2100)==(RX3_LED_ACTIVE|RX3_LED_LIT));
- assert(rx3_led_value(ls,4,2,1600)==RX3_LED_ACTIVE);
- assert(rx3_led_value(ls,4,2,2100)==(RX3_LED_ACTIVE|RX3_LED_LIT));
+ assert(!(rx3_led_value(ls,18,1,0)&RX3_LED_BLINK));
+ assert(rx3_led_value(ls,1,2,1200)==(RX3_LED_ACTIVE|RX3_LED_BLINK|RX3_LED_LIT));
+ assert(rx3_led_value(ls,1,2,1600)==(RX3_LED_ACTIVE|RX3_LED_BLINK));
+ assert(rx3_led_value(ls,1,2,2100)==(RX3_LED_ACTIVE|RX3_LED_BLINK|RX3_LED_LIT));
+ assert(rx3_led_value(ls,4,2,1600)==(RX3_LED_ACTIVE|RX3_LED_BLINK));
+ assert(rx3_led_value(ls,4,2,2100)==(RX3_LED_ACTIVE|RX3_LED_BLINK|RX3_LED_LIT));
  assert(rx3_led_value(ls,7,1,0)==0);
  assert(rx3_led_value(ls,2,1,0)==0);
  assert(rx3_led_value(ls,3,1,0)==0);             /* no record */

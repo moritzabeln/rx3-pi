@@ -48,6 +48,9 @@ static void *control_thread(void *unused){
   * which otherwise starts disabled. Select it explicitly, without toggling. */
  ((void (*)(void*,int,int))0x4e2c4)(engine,0,1);
  ((void (*)(void*,int,int))0x4e2c4)(engine,1,1);
+ /* Beat FX type is an absolute selector position (op 5, uif SW_BFX_TYPE);
+  * start at position 0, where the MIDI bridge's SELECT stepping begins. */
+ sendkey(manager,0x448b,5,0,0,0.f,0);
  sendkey(manager,0x6017,4,0,0,.5f,0);
  sendkey(manager,0x4403,4,0,0,.6f,0);
  sendkey(manager,0x4406,4,0,0,.5f,0);

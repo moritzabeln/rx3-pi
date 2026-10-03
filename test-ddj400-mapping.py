@@ -17,6 +17,14 @@ for deck in (1,2):
   ('volume',cc,0x13,'<fourteen-bit-msb/>'),('volume',cc,0x33,'<fourteen-bit-lsb/>'),
   ('hotcue_1_activate',pads,0x00,''),('beatloop_4_toggle',pads,0x64,''),
   ('PioneerDDJ400.beatjumpPadPressed',pads,0x21,''))]
+# Beat FX section of Mixxx's mapping (MSB only), plus an effect-unit binding the bridge must ignore.
+CONTROLS+=[('[EffectRack1_EffectUnit1]',k,s,no,'') for k,s,no in (
+ ('PioneerDDJ400.beatFxLeftPressed',0x94,0x4a),('PioneerDDJ400.beatFxRightPressed',0x94,0x4b),
+ ('PioneerDDJ400.beatFxSelectPressed',0x94,0x63),('PioneerDDJ400.beatFxSelectShiftPressed',0x94,0x64),
+ ('PioneerDDJ400.beatFxChannel',0x94,0x10),('PioneerDDJ400.beatFxChannel',0x94,0x11),
+ ('PioneerDDJ400.beatFxChannel',0x94,0x14),('PioneerDDJ400.beatFxLevelDepthRotate',0xb4,0x02),
+ ('PioneerDDJ400.beatFxOnOffPressed',0x94,0x47),('PioneerDDJ400.beatFxOnOffShiftPressed',0x94,0x43),
+ ('super1',0xb4,0x30))]
 XML='<root><controls>'+''.join(f'<control><group>{g}</group><key>{k}</key><status>{s:#x}</status><midino>{n:#x}</midino><options>{o}</options></control>' for g,k,s,n,o in CONTROLS)+'</controls></root>'
 class DDJ400(unittest.TestCase):
  def setUp(self):
@@ -63,6 +71,33 @@ class DDJ400(unittest.TestCase):
   self.assertEqual(self.feed(0x99,0x64,0x7f)[-1],(0x411b,0,2,0,0.,0x5041))
   self.assertEqual(self.feed(0x99,0x21,0x7f)[-1],(0x4118,0,2,0,0.,0x5043))
   self.assertEqual(self.feed(0xb0,0x13,0x7f,0x33,0x7f),[(0x501e,4,1,0,1.,0)])
+ def test_beat_fx(self):
+  # BEAT </> and ON/OFF are native presses; the RX3 ignores the releases of these keys.
+  self.assertEqual(self.feed(0x94,0x4a,0x7f,0x94,0x4a,0),[(0x4490,0,0,0,0.,0),(0x4490,2,0,0,0.,0)])
+  self.assertEqual(self.feed(0x94,0x4b,0x7f),[(0x4491,0,0,0,0.,0)])
+  self.assertEqual(self.feed(0x94,0x47,0x7f,0x94,0x47,0),[(0x448d,0,0,0,0.,0),(0x448d,2,0,0,0.,0)])
+  # LEVEL/DEPTH is 14-bit; the MSB alone sends nothing.
+  self.assertEqual(self.feed(0xb4,0x02,0x7f),[])
+  self.assertEqual(self.feed(0xb4,0x22,0x7f),[(0x448f,4,0,0,1.,0)])
+  self.assertEqual(self.feed(0xb4,0x02,0,0xb4,0x22,0),[(0x448f,4,0,0,0.,0)])
+ def test_beat_fx_select_steps_the_rx3_selector(self):
+  self.assertEqual(self.feed(0x94,0x63,0x7f,0x94,0x63,0),[(0x448b,5,0,1,0.,0)])
+  self.assertEqual(self.feed(0x94,0x64,0x7f,0x94,0x64,0x7f),[(0x448b,5,0,0,0.,0),(0x448b,5,0,13,0.,0)])
+  self.assertEqual(self.feed(0x94,0x63,0x7f),[(0x448b,5,0,0,0.,0)])
+ def test_beat_fx_channel_switch(self):
+  # Moving the switch sends the new position on and the previous one off.
+  self.assertEqual(self.feed(0x94,0x11,0x7f,0x94,0x10,0),[(0x448c,5,0,1,0.,0)])
+  self.assertEqual(self.feed(0x94,0x14,0x7f,0x94,0x11,0),[(0x448c,5,0,5,0.,0)])
+  self.assertEqual(self.feed(0x94,0x10,0x7f,0x94,0x14,0),[(0x448c,5,0,0,0.,0)])
+ def test_shift_beat_fx_on_off_only_switches_an_active_effect_off(self):
+  self.assertEqual(self.feed(0x94,0x43,0x7f),[])
+  states=bytearray(195);states[48]=10;self.b.led_frame(bytes(states))
+  self.assertEqual(self.feed(0x94,0x43,0x7f,0x94,0x43,0),[(0x448d,0,0,0,0.,0),(0x448d,2,0,0,0.,0)])
+  # Steadily lit means the effect is off.
+  states[48]=3;self.b.led_frame(bytes(states))
+  self.assertEqual(self.feed(0x94,0x43,0x7f),[])
+ def test_other_effect_unit_bindings_are_ignored(self):
+  self.assertEqual(self.feed(0xb4,0x30,0x7f),[])
 class Leds(unittest.TestCase):
  def setUp(self):
   self.f=tempfile.NamedTemporaryFile(mode='w',suffix='.xml');self.f.write(XML);self.f.flush()
@@ -77,8 +112,9 @@ class Leds(unittest.TestCase):
  @staticmethod
  def messages(data):return {(data[i],data[i+1],data[i+2]) for i in range(0,len(data),3)}
  def test_first_frame_sets_every_led_then_only_changes(self):
-  # 13 deck notes x 2 decks, 3 pad modes x 8 pads x 2 layers x 2 decks, master cue, 2 meters.
-  self.assertEqual(len(self.frame())//3,26+96+1+2)
+  # 13 deck notes x 2 decks, 3 pad modes x 8 pads x 2 layers x 2 decks, master cue, 2 meters,
+  # BEAT FX ON/OFF x 2 layers.
+  self.assertEqual(len(self.frame())//3,26+96+1+2+2)
   self.assertEqual(self.frame(),b'')
   self.assertEqual(self.messages(self.frame(c1_1=3)),{(0x90,0x0b,0x7f),(0x90,0x47,0x7f)})
   self.assertEqual(self.messages(self.frame(c1_1=3,c0_51=3)),{(0x96,0x63,0x7f)})
@@ -91,6 +127,13 @@ class Leds(unittest.TestCase):
    {(0x99,0x00,0),(0x9a,0x00,0),(0x99,0x20,0x7f),(0x9a,0x20,0x7f)})
   # A blinking mode LED still selects the bank.
   self.assertEqual(self.frame(c2_17=2,c2_18=3),b'')
+ def test_beat_fx_on_off_led_is_lit_only_while_the_rx3_blinks_it(self):
+  self.frame()
+  # Steady (effect off) stays dark; blinking (effect on) in either phase lights it.
+  self.assertEqual(self.frame(c0_48=3),b'')
+  self.assertEqual(self.messages(self.frame(c0_48=11)),{(0x94,0x47,0x7f),(0x94,0x43,0x7f)})
+  self.assertEqual(self.frame(c0_48=10),b'')
+  self.assertEqual(self.messages(self.frame(c0_48=3)),{(0x94,0x47,0),(0x94,0x43,0)})
  def test_dim_pads_are_off(self):
   self.frame()
   # Empty hot cues are on but dim on the RX3; set cues are at full brightness.
@@ -104,7 +147,7 @@ class Leds(unittest.TestCase):
  def test_off_and_reset(self):
   self.frame(c1_2=3)
   self.assertEqual(self.messages(self.b.led_off()),{(0x90,0x0c,0),(0x90,0x48,0)})
-  self.assertEqual(len(self.frame())//3,125)
+  self.assertEqual(len(self.frame())//3,127)
  def test_flx6_has_no_led_output(self):
   b=m.Bridge(self.f.name,lambda *e:None);self.assertIsNone(b.leds);self.assertEqual(b.led_frame(bytes(195)),b'')
  def test_state_file_reader(self):
