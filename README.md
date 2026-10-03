@@ -70,14 +70,14 @@ Find your USB UUID:
 lsblk -o NAME,FSTYPE,UUID,LABEL,MOUNTPOINTS
 ```
 
-Any rekordbox USB export (FAT32, containing `PIONEER/rekordbox/export.pdb`) is used, whether it is plugged in before `./rx3 start` or while RX3 runs. To use only one particular stick, put its UUID in `rx3.conf`:
+Any rekordbox USB export (FAT32, containing `PIONEER/rekordbox/export.pdb`) is used, whether it is plugged in before `./rx3 start` or while RX3 runs. Like the RX3's two ports, up to two sticks are shown at once as USB1 and USB2; a replugged stick returns to its previous slot when that is free, and a third stick waits until a slot is ejected. To use only one particular stick, put its UUID in `rx3.conf`:
 
 ```ini
 [usb]
 uuid = 1234-ABCD
 ```
 
-To remove a stick, open **Source** on the touchscreen and touch **EJECT** (the RX3's USB STOP); unplug it once the player has released it. Unplugging without EJECT is handled, but a track playing from the stick stops. A background helper (`work/state/logs/usb.log`) does the mounting; `./rx3 start` runs it with the same sudo password prompt as the player. Copying loose tracks is not a tested library workflow.
+To remove a stick, open **Source** on the touchscreen, select the USB and touch **EJECT** above **MY SETTINGS MENU** in its info pane (the RX3's USB STOP for that slot); unplug it once the player has released it. Unplugging without EJECT is handled, but a track playing from the stick stops. A background helper (`work/state/logs/usb.log`) does the mounting; `./rx3 start` runs it with the same sudo password prompt as the player. Copying loose tracks is not a tested library workflow.
 
 ```sh
 ./rx3 doctor
@@ -94,7 +94,7 @@ To stop and release the devices/mounts:
 ./rx3 stop
 ```
 
-The USB is mounted **read-only inside the RX3 runtime** as USB1, which is hidden from the player; the player sees only USB2, a local copy of its database/analysis files in `work/runtime/media/usb2/.rx3-libraries/<UUID>`, preserving local cue/grid edits on later starts. Each stick has its own copy, so databases never mix. Music stays on the USB; the supported music folders are `Contents`, `Music` and `PIONEER/Artwork`. This does not write edits back to the original USB. Re-exporting the same USB does not automatically refresh existing local database/analysis files; move that stick's folder away to start from the new export.
+Each stick is mounted **read-only inside the RX3 runtime** (`work/runtime/media/.rx3-usb/<slot>`, not visible as a source). Its slot shows a local copy of its database/analysis files in `work/runtime/media/usb2/.rx3-libraries/<UUID>`, preserving local cue/grid edits on later starts. Each stick has its own copy, so databases never mix. Music stays on the USB: every top-level folder of the stick except `PIONEER`, plus `PIONEER/Artwork`, is bound read-only into the slot. This does not write edits back to the original USB. Re-exporting the same USB does not automatically refresh existing local database/analysis files; move that stick's folder away to start from the new export.
 
 ## Settings and individual steps
 

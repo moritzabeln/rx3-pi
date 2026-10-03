@@ -10,7 +10,7 @@ from rx3tool import config
 from rx3tool.launch import Launcher, USB1, USB2
 from rx3tool.safefs import Tree
 from rx3tool.ui import Failure
-from rx3tool.usb import LIBRARIES, SLOTS, UsbWatcher, as_user, candidates, copy_library, migrate
+from rx3tool.usb import LIBRARIES, SOURCES, SLOTS, UsbWatcher, as_user, candidates, copy_library, migrate, stick_folders
 
 A, B = 'CA98-D2DE', '1234-ABCD'
 
@@ -43,8 +43,17 @@ class UsbTests(unittest.TestCase):
     def watcher(self, present, cfg=None):
         launcher = FakeLauncher(self.runtime)
         w = UsbWatcher(cfg or self.cfg, launcher=launcher, scan=lambda: dict(present))
-        w.release = lambda: launcher.sent.append(('release', ''))
+        w.release = lambda slot: launcher.sent.append(('release', slot))
         return w, launcher
+
+    @staticmethod
+    def fake_attach(attached):
+        def attach(self, slot, uuid, device, fstype):
+            attached.append((slot, uuid))
+            self.slots[slot] = uuid
+            self.preferred[uuid] = slot
+            return True
+        return attach
 
     def test_candidates_are_hotplugged_fat_with_safe_names(self):
         listing = json.dumps({'blockdevices': [
@@ -63,37 +72,88 @@ class UsbTests(unittest.TestCase):
         self.assertEqual(candidates(listing, A.lower()), {A: ('/dev/sdc1', 'vfat')})
         self.assertEqual(candidates(listing, B), {})
 
+    def test_usb_stick_is_found_by_transport_and_sd_card_is_not(self):
+        # Raspberry Pi: the stick has HOTPLUG=0 but TRAN=usb; the SD card reports HOTPLUG=1.
+        listing = json.dumps({'blockdevices': [
+            {'path': '/dev/sda', 'fstype': None, 'uuid': None, 'hotplug': False, 'rm': True, 'tran': 'usb',
+             'mountpoints': [None], 'children': [
+                {'path': '/dev/sda1', 'fstype': 'vfat', 'uuid': A, 'hotplug': False, 'rm': True,
+                 'tran': None, 'mountpoints': [None]}]},
+            {'path': '/dev/mmcblk0', 'fstype': None, 'uuid': None, 'hotplug': True, 'rm': False,
+             'tran': 'mmc', 'mountpoints': [None], 'children': [
+                {'path': '/dev/mmcblk0p1', 'fstype': 'vfat', 'uuid': 'E4BA-E95D', 'hotplug': True,
+                 'tran': None, 'mountpoints': ['/boot/firmware']}]}]})
+        self.assertEqual(candidates(listing), {A: ('/dev/sda1', 'vfat')})
+        self.assertEqual(candidates(listing, 'E4BA-E95D'), {A: ('/dev/sda1', 'vfat')})
+
     def test_plug_unplug_and_replug(self):
         present = {A: ('/dev/sda1', 'vfat')}
         w, launcher = self.watcher(present)
         attached = []
-        with patch.object(UsbWatcher, 'attach', lambda self, u, d, f: attached.append(u) or setattr(self, 'current', u) or True):
+        with patch.object(UsbWatcher, 'attach', self.fake_attach(attached)):
             w.poll()
-            self.assertEqual((attached, w.current), ([A], A))
+            self.assertEqual((attached, w.slots), ([(1, A)], {1: A}))
             w.scan = lambda: {}
             w.poll()
-            self.assertIsNone(w.current)
-            self.assertEqual(launcher.sent, [('proc/udev_usb2', 'umount /media/usb2/sdb1'), ('release', '')])
+            self.assertEqual(w.slots, {})
+            self.assertEqual(launcher.sent, [('proc/udev_usb1', 'umount /media/usb1/sda1'), ('release', 1)])
             w.scan = lambda: dict(present)
             w.poll()
-            self.assertEqual(attached, [A, A])
+            self.assertEqual(attached, [(1, A), (1, A)])
 
-    def test_eject_releases_stick_and_waits_for_unplug(self):
-        present = {A: ('/dev/sda1', 'vfat')}
+    def test_two_sticks_get_their_own_slots_and_a_third_waits(self):
+        C = 'ABCD-0001'
+        present = {A: ('/dev/sda1', 'vfat'), B: ('/dev/sdb1', 'vfat')}
         w, launcher = self.watcher(present)
-        w.current = A
-        w.eject({'/media/usb1/sda1'})
-        # Only USB2 is visible to the player, so it is reported removed even if USB1 was stopped.
-        self.assertEqual(launcher.sent, [('proc/udev_usb2', 'umount /media/usb2/sdb1'), ('release', '')])
-        self.assertIsNone(w.current)
+        attached = []
+        with patch.object(UsbWatcher, 'attach', self.fake_attach(attached)):
+            w.poll()
+            self.assertEqual(w.slots, {1: B, 2: A})
+            # Unplugging one stick leaves the other in its slot.
+            w.scan = lambda: {A: present[A]}
+            w.poll()
+            self.assertEqual(w.slots, {2: A})
+            self.assertEqual(launcher.sent, [('proc/udev_usb1', 'umount /media/usb1/sda1'), ('release', 1)])
+            w.scan = lambda: {A: present[A], C: ('/dev/sdc1', 'vfat')}
+            w.poll()
+            self.assertEqual(w.slots, {1: C, 2: A})
+            # B finds both slots in use; it is shown once a slot frees, back in its old slot if free.
+            w.scan = lambda: {A: present[A], B: present[B], C: ('/dev/sdc1', 'vfat')}
+            w.poll()
+            self.assertEqual((w.slots, w.waiting), ({1: C, 2: A}, {B}))
+            w.scan = lambda: {A: present[A], B: present[B]}
+            w.poll()
+            self.assertEqual(w.slots, {1: B, 2: A})
+
+    def test_replugged_stick_returns_to_its_slot(self):
+        present = {A: ('/dev/sda1', 'vfat'), B: ('/dev/sdb1', 'vfat')}
+        w, _ = self.watcher(present)
+        with patch.object(UsbWatcher, 'attach', self.fake_attach([])):
+            w.poll()
+            w.scan = lambda: {A: present[A]}
+            w.poll()
+            w.scan = lambda: {}
+            w.poll()
+            w.scan = lambda: {A: present[A]}
+            w.poll()
+            self.assertEqual(w.slots, {2: A})
+
+    def test_eject_releases_only_that_slot_and_waits_for_unplug(self):
+        present = {A: ('/dev/sda1', 'vfat'), B: ('/dev/sdb1', 'vfat')}
+        w, launcher = self.watcher(present)
+        w.slots = {1: A, 2: B}
+        w.eject({1})
+        # The slot is reported removed after release, as when a stopped stick is pulled out.
+        self.assertEqual(launcher.sent, [('release', 1), ('proc/udev_usb1', 'umount /media/usb1/sda1')])
+        self.assertEqual(w.slots, {2: B})
         with patch.object(UsbWatcher, 'attach') as attach:
             w.poll()
             attach.assert_not_called()           # still plugged in after EJECT
-            w.scan = lambda: {}
+            w.scan = lambda: {B: present[B]}
             w.poll()
             w.scan = lambda: dict(present)
             w.poll()
-            attach.assert_called_once_with(A, '/dev/sda1', 'vfat')
+            attach.assert_called_once_with(1, A, '/dev/sda1', 'vfat')
 
     def test_unusable_stick_is_skipped_until_replugged_and_uuid_setting_filters(self):
         present = {A: ('/dev/sda1', 'vfat'), B: ('/dev/sdb1', 'vfat')}
@@ -101,26 +161,28 @@ class UsbTests(unittest.TestCase):
         with patch.object(UsbWatcher, 'attach', return_value=False) as attach:
             w.poll()
             w.poll()
-            self.assertEqual([c.args[0] for c in attach.call_args_list], [B, A])
+            self.assertEqual([c.args[1] for c in attach.call_args_list], [B, A])
         restricted = config.load(self.conf, [f'usb.uuid={A.lower()}'], env={})
         w, _ = self.watcher(present, restricted)
         with patch.object(UsbWatcher, 'attach', return_value=True) as attach:
             w.poll()
-            attach.assert_called_once_with(A, '/dev/sda1', 'vfat')
+            attach.assert_called_once_with(1, A, '/dev/sda1', 'vfat')
 
     def test_stick_without_rekordbox_export_is_released(self):
         w, launcher = self.watcher({})
+        source = self.runtime / SOURCES / '2'
         with patch.object(UsbWatcher, 'mount_stick'), patch.object(UsbWatcher, 'library') as library:
-            self.assertFalse(w.attach(A, '/dev/sda1', 'vfat'))
+            self.assertFalse(w.attach(2, A, '/dev/sda1', 'vfat'))
             library.assert_not_called()
-        self.assertEqual(launcher.sent, [('release', '')])
-        (self.runtime / USB1 / 'PIONEER/rekordbox').mkdir(parents=True)
-        (self.runtime / USB1 / 'PIONEER/rekordbox/export.pdb').write_bytes(b'db')
+        self.assertEqual(launcher.sent, [('release', 2)])
+        (source / 'PIONEER/rekordbox').mkdir(parents=True)
+        (source / 'PIONEER/rekordbox/export.pdb').write_bytes(b'db')
         with patch.object(UsbWatcher, 'mount_stick'), patch.object(UsbWatcher, 'library'):
-            self.assertTrue(w.attach(A, '/dev/sda1', 'vfat'))
+            self.assertTrue(w.attach(2, A, '/dev/sda1', 'vfat'))
         self.assertEqual([m for _, m in launcher.sent[1:]], ['mount /media/usb2/sdb1'])
+        self.assertEqual(w.slots, {2: A})
 
-    def test_eject_requests_collect_both_slots(self):
+    def test_eject_requests_name_slots(self):
         w, _ = self.watcher({})
         read, write = os.pipe()
         self.addCleanup(os.close, read)
@@ -131,11 +193,7 @@ class UsbTests(unittest.TestCase):
         os.write(write, b'eject /media/usb1/sda1\neject /media/usb2/sdb1\nbogus /etc\n')
         self.assertEqual(w.requests(0), set(SLOTS))
         os.write(write, b'eject /media/usb2/sdb1\n')
-        self.assertEqual(w.requests(0), {'/media/usb2/sdb1'})
-        clock = iter([0., 2., 3.])
-        w.clock = lambda: next(clock)
-        os.write(write, b'eject /media/usb1/sda1\n')
-        self.assertEqual(w.requests(0), {'/media/usb1/sda1'})
+        self.assertEqual(w.requests(0), {2})
 
     def test_existing_library_copy_moves_to_its_stick(self):
         dst = self.runtime / USB2
@@ -143,14 +201,14 @@ class UsbTests(unittest.TestCase):
         (dst / 'PIONEER/rekordbox/export.pdb').write_bytes(b'edited')
         (dst / '.rx3-usb-uuid').write_text(A + '\n')
         with Tree(self.runtime) as tree:
-            migrate(tree, dst)
+            migrate(tree, USB2, dst)
         self.assertEqual(list(dst.iterdir()), [])
         self.assertEqual((self.runtime / LIBRARIES / A.lower() / 'PIONEER/rekordbox/export.pdb').read_bytes(), b'edited')
         with Tree(self.runtime) as tree:
-            migrate(tree, dst)                   # nothing left to move
+            migrate(tree, USB2, dst)             # nothing left to move
         (dst / 'stray').write_text('x')
         with Tree(self.runtime) as tree, self.assertRaisesRegex(Failure, 'without a USB UUID'):
-            migrate(tree, dst)
+            migrate(tree, USB2, dst)
 
     def test_library_copy_never_overwrites_edits(self):
         src = self.runtime / USB1
@@ -158,14 +216,18 @@ class UsbTests(unittest.TestCase):
                           ('PIONEER/USBANLZ/P01/0001/ANLZ0000.DAT', b'usb-anlz')):
             (src / rel).parent.mkdir(parents=True, exist_ok=True)
             (src / rel).write_bytes(data)
-        (src / 'Contents').mkdir()
+        for folder in ('Contents', 'My Tracks', '.Trashes', 'PIONEER/Artwork'):
+            (src / folder).mkdir()
+        folders = stick_folders(src)
+        self.assertEqual(folders, ['Contents', 'My Tracks', 'PIONEER/Artwork'])
         local = self.runtime / USB2 / 'PIONEER/USBANLZ/P01/0001'
         local.mkdir(parents=True)
         (local / 'ANLZ0000.DAT').write_bytes(b'edited cues')
-        self.assertEqual(copy_library(self.runtime, src, USB2), 2)
+        self.assertEqual(copy_library(self.runtime, src, USB2, folders), 2)
         self.assertEqual((local / 'ANLZ0000.DAT').read_bytes(), b'edited cues')
         self.assertEqual((self.runtime / USB2 / 'PIONEER/rekordbox/export.pdb').read_bytes(), b'usb')
-        self.assertTrue((self.runtime / USB2 / 'Contents').is_dir())
+        for folder in folders:
+            self.assertTrue((self.runtime / USB2 / folder).is_dir())
 
     def test_helper_command_keeps_overrides_and_is_recognised(self):
         c = config.load(self.conf, [f'usb.uuid={A}'], env={})

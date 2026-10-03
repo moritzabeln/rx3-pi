@@ -29,7 +29,6 @@ UI_STATE = struct.pack('<I6fII', 0x52583332, 1, .6, 0, 1, .5, .5, 0, 1)
 BIND_DEVICES = ['null', 'zero', 'urandom', 'full']
 USB1 = 'media/usb1/sda1'
 USB2 = 'media/usb2/sdb1'
-LIBRARY_PARTS = ['Contents', 'Music', 'PIONEER/Artwork']
 STOP_ORDER = ['usb', 'midi', 'touch', 'player', 'display']
 SUPPORTED_USB = {'vfat': 'tested', 'exfat': 'untested'}
 USB_EJECT_FIFO = 'dev/rx3-usb-eject'

@@ -54,7 +54,7 @@ CPUINFO = (
 # The player looks up USB filesystem types here (FAT is its default).
 MOUNTS = (
     'rootfs / rootfs rw 0 0\n'
-    '/dev/sda1 /media/usb1/sda1 vfat ro 0 0\n'
+    '/dev/sda1 /media/usb1/sda1 vfat rw 0 0\n'
     '/dev/sdb1 /media/usb2/sdb1 vfat rw 0 0\n'
 )
 

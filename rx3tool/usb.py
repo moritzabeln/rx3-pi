@@ -1,9 +1,9 @@
 """USB hot-plug and eject while the player runs (`./rx3 usb-watch`, started by `./rx3 start`).
 
-One rekordbox USB at a time is mounted read-only at USB1 (media/usb1/sda1), hidden from the
-player, and shown as USB2 (media/usb2/sdb1): a writable local copy of the
-rekordbox database/analysis with the music folders bound read-only from the stick.
-Local copies are kept per stick UUID, so several sticks never mix databases.
+Up to two rekordbox USBs are shown to the player as USB1 and USB2, like the RX3's two ports.
+Each stick is mounted read-only at a private source path (media/.rx3-usb/<slot>). Its slot
+shows a writable local copy of the rekordbox database/analysis, kept per stick UUID so
+sticks never mix databases, with the stick's other folders bound read-only from the stick.
 
 The player's USB STOP (touch EJECT) ends in umount(); the shim (usb-eject.c) turns
 that into a line on dev/rx3-usb-eject. Unplugging without eject is reported to the
@@ -15,50 +15,61 @@ import re
 import select
 import stat
 import subprocess
-import time
 from contextlib import contextmanager
 
-from .launch import LIBRARY_PARTS, SUPPORTED_USB, USB1, USB2, USB_EJECT_FIFO as EJECT_FIFO, Launcher
+from .launch import SUPPORTED_USB, USB1, USB2, USB_EJECT_FIFO as EJECT_FIFO, Launcher
 from .safefs import Tree
 from .system import mount_at, mounts, runtime_mounts
 from .ui import Failure, info, ok, say, warn
 
 LIBRARIES = 'media/usb2/.rx3-libraries'
+SOURCES = 'media/.rx3-usb'
 STAMP = '.rx3-usb-uuid'
-SLOTS = {'/media/usb1/sda1': (USB1, 'proc/udev_usb1'), '/media/usb2/sdb1': (USB2, 'proc/udev_usb2')}
-# Only the local library is announced; USB1 stays a hidden read-only source for it.
-SHOWN = ['/media/usb2/sdb1']
+# slot: (runtime path, path the player knows, its notification FIFO)
+SLOTS = {1: (USB1, '/media/usb1/sda1', 'proc/udev_usb1'),
+         2: (USB2, '/media/usb2/sdb1', 'proc/udev_usb2')}
 UUID_NAME = re.compile(r'^[0-9A-Fa-f][0-9A-Fa-f-]{3,35}$')
 DEVICE = re.compile(r'^/dev/[A-Za-z0-9_]+$')
 
 
-def candidates(listing=None, wanted=''):
-    """{uuid: (device, fstype)} for FAT32/exFAT filesystems on hot-plugged disks.
+SYSTEM_MOUNTS = ('/', '/boot', '/efi', '/home', '/var', '/usr')
 
+
+def system_mounted(item):
+    points = item.get('mountpoints') or [item.get('mountpoint')]
+    return any(p and (p in SYSTEM_MOUNTS or p.startswith('/boot/')) for p in points)
+
+
+def candidates(listing=None, wanted=''):
+    """{uuid: (device, fstype)} for FAT32/exFAT filesystems on removable or USB disks.
+
+    Built-in SD cards (mmc) and filesystems mounted as part of the system are never offered.
     A filesystem whose UUID is `wanted` (the [usb] uuid setting) is accepted even if the
-    system does not flag its disk as hot-pluggable.
+    system does not flag its disk as removable.
     """
     if listing is None:
-        result = subprocess.run(['lsblk', '-J', '-o', 'PATH,FSTYPE,UUID,HOTPLUG'],
+        result = subprocess.run(['lsblk', '-J', '-o', 'PATH,FSTYPE,UUID,HOTPLUG,RM,TRAN,MOUNTPOINTS'],
                                 capture_output=True, text=True)
         if result.returncode:
             return {}
         listing = result.stdout
     found = {}
-    def walk(items, hotplug=False):
+    def walk(items, parent=(False, '')):
         for item in items or []:
-            # lsblk flags the disk; its partitions may not carry the flag themselves.
-            flagged = hotplug or item.get('hotplug') in (True, 1, '1')
-            yield item, flagged
-            yield from walk(item.get('children'), flagged)
+            # lsblk reports flags and transport on the disk; partitions may not carry them.
+            flagged = parent[0] or any(item.get(k) in (True, 1, '1') for k in ('hotplug', 'rm'))
+            tran = item.get('tran') or parent[1]
+            yield item, flagged or tran == 'usb', tran
+            yield from walk(item.get('children'), (flagged, tran))
     try:
         devices = list(walk(json.loads(listing).get('blockdevices')))
     except ValueError:
         return {}
-    for item, hotplug in devices:
+    for item, removable, tran in devices:
         uuid, device, fstype = item.get('uuid'), item.get('path'), item.get('fstype')
         chosen = bool(wanted) and bool(uuid) and uuid.lower() == wanted.lower()
-        if (hotplug or chosen) and fstype in SUPPORTED_USB and uuid and UUID_NAME.match(uuid) \
+        if (removable or chosen) and tran != 'mmc' and not system_mounted(item) \
+                and fstype in SUPPORTED_USB and uuid and UUID_NAME.match(uuid) \
                 and device and DEVICE.match(device):
             found[uuid] = (device, fstype)
     return found
@@ -80,57 +91,61 @@ def as_user(uid, gid):
 
 
 class UsbWatcher:
-    def __init__(self, config, launcher=None, scan=None, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, config, launcher=None, scan=None):
         self.config = config
         self.launcher = launcher or Launcher(config)
         self.runtime = config.runtime
         self.scan = scan or (lambda: candidates(wanted=self.config.get('usb', 'uuid')))
-        self.clock = clock
-        self.sleep = sleep
-        self.current = None      # uuid shown to the player
+        self.slots = {}          # slot -> uuid shown to the player
+        self.preferred = {}      # uuid -> slot it last used, so a replugged stick returns there
         self.skip = set()        # ejected or unusable sticks, until they are unplugged
+        self.waiting = set()     # sticks reported as having no free slot
         self.fifo = None
 
     # -- player notifications -------------------------------------------------
-    def notify(self, slots, word):
-        for path in slots:
-            try:
-                self.launcher.notify(SLOTS[path][1], f'{word} {path}'.encode())
-            except (OSError, Failure) as error:
-                warn(f'Could not tell the player "{word} {path}": {error}')
+    def notify(self, slot, word):
+        _, path, fifo = SLOTS[slot]
+        try:
+            self.launcher.notify(fifo, f'{word} {path}'.encode())
+        except (OSError, Failure) as error:
+            warn(f'Could not tell the player "{word} {path}": {error}')
 
     # -- mounts -----------------------------------------------------------------
-    def release(self):
-        """Unmount everything in both USB slots, deepest first; lazily if still busy or gone."""
-        slots = [str(self.launcher.rt(USB1)), str(self.launcher.rt(USB2))]
+    def release(self, slot):
+        """Unmount the slot's library view and its stick, deepest first; lazily if busy or gone."""
+        roots = [str(self.launcher.rt(SLOTS[slot][0])), str(self.launcher.rt(f'{SOURCES}/{slot}'))]
         for target in runtime_mounts(self.runtime):
-            if not any(target == s or target.startswith(s + '/') for s in slots):
+            if not any(target == r or target.startswith(r + '/') for r in roots):
                 continue
             result = self.launcher.sudo(['umount', target], check=False, capture=True)
             if result.returncode:
                 self.launcher.sudo(['umount', '-l', target], check=False, capture=True)
 
-    def attach(self, uuid, device, fstype):
-        """Mount the stick in both slots and tell the player; False if it is not usable."""
+    def attach(self, slot, uuid, device, fstype):
+        """Mount the stick into `slot` and tell the player; False if it is not usable."""
+        source = f'{SOURCES}/{slot}'
         try:
-            self.mount_stick(device, fstype)
-            if not (self.launcher.rt(USB1) / 'PIONEER/rekordbox/export.pdb').is_file():
+            self.mount_stick(source, device, fstype)
+            if not (self.launcher.rt(source) / 'PIONEER/rekordbox/export.pdb').is_file():
                 warn(f'USB {uuid} has no rekordbox export (PIONEER/rekordbox/export.pdb); ignored')
-                self.release()
+                self.release(slot)
                 return False
-            self.library(uuid)
+            self.library(slot, uuid)
         except (Failure, OSError, subprocess.SubprocessError) as error:
             warn(f'USB {uuid} could not be prepared: {error}')
-            self.release()
+            self.release(slot)
             return False
-        self.current = uuid
-        self.notify(SHOWN, 'mount')
-        ok(f'USB {uuid} ready as USB2 (local library)')
+        self.slots[slot] = uuid
+        self.preferred[uuid] = slot
+        self.notify(slot, 'mount')
+        ok(f'USB {uuid} ready as USB{slot}')
         return True
 
-    def mount_stick(self, device, fstype):
+    def mount_stick(self, source, device, fstype):
         launcher = self.launcher
-        target = launcher.check_target(USB1)
+        with as_user(self.config.uid(), self.config.gid()), Tree(self.runtime) as tree:
+            tree.mkdir(source, 0o755)
+        target = launcher.check_target(source)
         if mount_at(target):
             raise Failure(f'{target} is already mounted; left unchanged')
         host = [m for m in mounts() if m['root'] == '/' and not
@@ -141,98 +156,112 @@ class UsbWatcher:
             if fstype == 'vfat' and not ({'utf8', 'utf8=1', 'iocharset=utf8'} & options):
                 raise Failure(f'it is mounted at {host[0]["target"]} without UTF-8 file names; '
                               'eject it in the desktop and plug it in again')
-            launcher.bind(host[0]['target'], USB1, readonly=True)
+            launcher.bind(host[0]['target'], source, readonly=True)
         else:
             uid, gid = self.config.uid(), self.config.gid()
             charset = 'utf8=1' if fstype == 'vfat' else 'iocharset=utf8'
             launcher.sudo(['mount', '-t', fstype, '-o',
                            f'ro,uid={uid},gid={gid},{charset},nosuid,nodev,noexec', device, target])
 
-    def library(self, uuid):
-        """Bind this stick's local library copy at USB2 and add files that are new on the stick."""
+    def library(self, slot, uuid):
+        """Bind this stick's local library copy at the slot and add files that are new on the stick."""
         launcher = self.launcher
-        dst = launcher.check_target(USB2)
+        rel = SLOTS[slot][0]
+        dst = launcher.check_target(rel)
         if mount_at(dst):
             raise Failure(f'{dst} is already mounted; left unchanged')
+        src = launcher.rt(f'{SOURCES}/{slot}')
+        parts = stick_folders(src)
         store = f'{LIBRARIES}/{uuid.lower()}'
         with as_user(self.config.uid(), self.config.gid()), Tree(self.runtime) as tree:
-            migrate(tree, dst)
+            migrate(tree, rel, dst)
             tree.mkdir(LIBRARIES, 0o700)
             tree.mkdir(store, 0o755)
             if tree.lstat(f'{store}/{STAMP}') is None:
                 tree.write(f'{store}/{STAMP}', (uuid.lower() + '\n').encode(), 0o600)
-        launcher.bind(launcher.rt(store), USB2)
+        launcher.bind(launcher.rt(store), rel)
         with as_user(self.config.uid(), self.config.gid()):
-            copied = copy_library(self.runtime, launcher.rt(USB1), USB2)
-        for part in LIBRARY_PARTS:
-            if (launcher.rt(USB1) / part).is_dir():
-                launcher.bind(launcher.rt(USB1) / part, f'{USB2}/{part}', readonly=True)
+            copied = copy_library(self.runtime, src, rel, parts)
+        for part in parts:
+            launcher.bind(src / part, f'{rel}/{part}', readonly=True)
         info(f'Local library for {uuid}: {copied} new files copied; existing edits kept')
 
     # -- events -------------------------------------------------------------------
     def adopt(self):
-        """After a helper restart, take over a stick that is still mounted."""
-        current = mount_at(self.launcher.rt(USB1))
-        if not current:
-            self.release()
-            return
-        uuid = subprocess.run(['findmnt', '-n', '-o', 'UUID', '-M', str(self.launcher.rt(USB1))],
-                              capture_output=True, text=True).stdout.strip()
-        self.current = uuid or None
-        if self.current:
-            info(f'USB {uuid} is already mounted; watching it')
+        """After a helper restart, keep sticks that are still shown and clear anything else."""
+        for slot in SLOTS:
+            source = self.launcher.rt(f'{SOURCES}/{slot}')
+            uuid = ''
+            if mount_at(source) and mount_at(self.launcher.rt(SLOTS[slot][0])):
+                uuid = subprocess.run(['findmnt', '-n', '-o', 'UUID', '-M', str(source)],
+                                      capture_output=True, text=True).stdout.strip()
+            if uuid:
+                self.slots[slot] = uuid
+                self.preferred[uuid] = slot
+                info(f'USB {uuid} is already mounted as USB{slot}; watching it')
+            else:
+                self.release(slot)
+
+    def free_slot(self, uuid):
+        free = [slot for slot in SLOTS if slot not in self.slots]
+        if not free:
+            return None
+        return self.preferred[uuid] if self.preferred.get(uuid) in free else free[0]
 
     def poll(self):
         present = self.scan()
         self.skip &= set(present)
-        if self.current and self.current not in present:
-            warn(f'USB {self.current} was unplugged without EJECT; releasing it')
-            self.notify(SHOWN, 'umount')
-            self.release()
-            self.current = None
-        if self.current:
-            return
+        self.waiting &= set(present)
+        for slot, uuid in sorted(self.slots.items()):
+            if uuid not in present:
+                warn(f'USB {uuid} was unplugged from USB{slot} without EJECT; releasing it')
+                self.notify(slot, 'umount')
+                self.release(slot)
+                del self.slots[slot]
+        shown = set(self.slots.values())
         wanted = self.config.get('usb', 'uuid').lower()
         for uuid, (device, fstype) in sorted(present.items()):
-            if uuid in self.skip or (wanted and uuid.lower() != wanted):
+            if uuid in shown or uuid in self.skip or (wanted and uuid.lower() != wanted):
                 continue
-            if not self.attach(uuid, device, fstype):
+            slot = self.free_slot(uuid)
+            if slot is None:
+                if uuid not in self.waiting:
+                    info(f'USB {uuid} waits: both RX3 slots are in use; eject one to show it')
+                    self.waiting.add(uuid)
+                continue
+            self.waiting.discard(uuid)
+            if not self.attach(slot, uuid, device, fstype):
                 self.skip.add(uuid)
-            return
 
     def eject(self, requested):
-        """The player stopped `requested` slots; release the stick from both."""
-        if not self.current:
-            return
-        others = [path for path in SHOWN if path not in requested]
-        if others:
-            self.notify(others, 'umount')
-        self.release()
-        ok(f'USB {self.current} ejected; it can be unplugged now')
-        self.skip.add(self.current)
-        self.current = None
+        """The player stopped `requested` slots; release their sticks until they are unplugged."""
+        for slot in sorted(requested):
+            uuid = self.slots.pop(slot, None)
+            if uuid:
+                self.release(slot)
+                # The player keeps a stopped slot until it sees the removal; a later mount is ignored otherwise.
+                self.notify(slot, 'umount')
+                self.skip.add(uuid)
+                ok(f'USB {uuid} ejected from USB{slot}; it can be unplugged now')
 
     def requests(self, timeout):
-        """Slot paths from eject lines; after the first, wait briefly for the other slot."""
+        """Slots named in eject lines from the player."""
         if self.fifo is None:
             return set()
-        found, deadline = set(), None
-        while True:
-            wait = timeout if deadline is None else max(0., deadline - self.clock())
-            ready, _, _ = select.select([self.fifo], [], [], wait)
-            if ready:
-                try:
-                    data = os.read(self.fifo, 4096)
-                except BlockingIOError:
-                    data = b''
-                for line in data.decode(errors='replace').splitlines():
-                    word, _, path = line.partition(' ')
-                    if word == 'eject' and path in SLOTS:
-                        found.add(path)
-            if not found or set(SHOWN) <= found or (deadline and self.clock() >= deadline):
-                return found
-            if deadline is None:
-                deadline = self.clock() + 2
+        ready, _, _ = select.select([self.fifo], [], [], timeout)
+        if not ready:
+            return set()
+        try:
+            data = os.read(self.fifo, 4096)
+        except BlockingIOError:
+            return set()
+        paths = {path: slot for slot, (_, path, _) in SLOTS.items()}
+        found = set()
+        for line in data.decode(errors='replace').splitlines():
+            word, _, path = line.partition(' ')
+            if word == 'eject' and path in paths:
+                found.add(paths[path])
+        return found
 
     def open_fifo(self):
         path = self.launcher.check_target(EJECT_FIFO)
@@ -261,25 +290,35 @@ class UsbWatcher:
         return 0
 
 
-def migrate(tree, dst):
-    """Move a pre-hotplug library copy (USB2 itself, with a UUID stamp) into its per-UUID store."""
-    if tree.lstat(f'{USB2}/{STAMP}') is None:
+def migrate(tree, rel, dst):
+    """Move a pre-hotplug library copy (the slot itself, with a UUID stamp) into its per-UUID store."""
+    if tree.lstat(f'{rel}/{STAMP}') is None:
         if any(dst.iterdir()):
             raise Failure(f'{dst} holds files without a USB UUID record; left unchanged')
         return
-    with tree.open_read(f'{USB2}/{STAMP}') as handle:
+    with tree.open_read(f'{rel}/{STAMP}') as handle:
         uuid = handle.read().decode().strip().lower()
     if not UUID_NAME.match(uuid):
         raise Failure(f'{dst} has an invalid USB UUID record; left unchanged')
     tree.mkdir(LIBRARIES, 0o700)
     if tree.lstat(f'{LIBRARIES}/{uuid}') is not None:
         raise Failure(f'Two local library copies exist for USB {uuid}; left unchanged')
-    tree.rename(USB2, f'{LIBRARIES}/{uuid}')
-    tree.mkdir(USB2, 0o755)
+    tree.rename(rel, f'{LIBRARIES}/{uuid}')
+    tree.mkdir(rel, 0o755)
     info(f'Moved the existing local library of USB {uuid} to {LIBRARIES}/{uuid}')
 
 
-def copy_library(runtime, src, dst_rel):
+def stick_folders(src):
+    """Folders bound read-only from the stick: all but the rekordbox data (tracks may live anywhere)."""
+    folders = sorted(item.name for item in src.iterdir()
+                     if item.is_dir() and not item.is_symlink() and item.name != 'PIONEER'
+                     and not item.name.startswith('.') and '\n' not in item.name)
+    if (src / 'PIONEER/Artwork').is_dir():
+        folders.append('PIONEER/Artwork')
+    return folders
+
+
+def copy_library(runtime, src, dst_rel, folders):
     """Copy rekordbox database/analysis files that do not exist locally yet; never overwrite."""
     copied = 0
     with Tree(runtime) as tree:
@@ -291,9 +330,8 @@ def copy_library(runtime, src, dst_rel):
                         with item.open('rb') as handle:
                             tree.write(rel, handle, 0o644)
                         copied += 1
-        for part in LIBRARY_PARTS:
-            if (src / part).is_dir():
-                tree.mkdir(f'{dst_rel}/{part}', 0o755)
+        for part in folders:
+            tree.mkdir(f'{dst_rel}/{part}', 0o755)
         analysis = src / 'PIONEER' / 'USBANLZ'
         tree.mkdir(f'{dst_rel}/PIONEER/USBANLZ', 0o755)
         if analysis.is_dir():
@@ -324,6 +362,6 @@ def main(config, running=lambda: True):
     except KeyboardInterrupt:
         return 0
     finally:
-        if watcher.current:
-            watcher.notify(SHOWN, 'umount')
-            watcher.release()
+        for slot in sorted(watcher.slots):
+            watcher.notify(slot, 'umount')
+            watcher.release(slot)
