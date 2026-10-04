@@ -15,6 +15,7 @@ import re
 import select
 import stat
 import subprocess
+import time
 from contextlib import contextmanager
 
 from .launch import SUPPORTED_USB, USB1, USB2, USB_EJECT_FIFO as EJECT_FIFO, Launcher
@@ -24,6 +25,7 @@ from .ui import Failure, info, ok, say, warn
 
 LIBRARIES = 'media/usb2/.rx3-libraries'
 SOURCES = 'media/.rx3-usb'
+STRAY = 'media/.rx3-stray'
 STAMP = '.rx3-usb-uuid'
 # slot: (runtime path, path the player knows, its notification FIFO)
 SLOTS = {1: (USB1, '/media/usb1/sda1', 'proc/udev_usb1'),
@@ -294,7 +296,12 @@ def migrate(tree, rel, dst):
     """Move a pre-hotplug library copy (the slot itself, with a UUID stamp) into its per-UUID store."""
     if tree.lstat(f'{rel}/{STAMP}') is None:
         if any(dst.iterdir()):
-            raise Failure(f'{dst} holds files without a USB UUID record; left unchanged')
+            # Not a library copy: written into the unmounted slot, e.g. by the player after a release.
+            stray = f'{STRAY}/{rel.replace("/", "-")}-{time.strftime("%Y%m%d-%H%M%S")}'
+            tree.mkdir(STRAY, 0o700)
+            tree.rename(rel, stray)
+            tree.mkdir(rel, 0o755)
+            warn(f'{dst} held files without a USB UUID record; moved them to {stray}')
         return
     with tree.open_read(f'{rel}/{STAMP}') as handle:
         uuid = handle.read().decode().strip().lower()

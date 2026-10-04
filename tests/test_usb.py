@@ -10,7 +10,7 @@ from rx3tool import config
 from rx3tool.launch import Launcher, USB1, USB2
 from rx3tool.safefs import Tree
 from rx3tool.ui import Failure
-from rx3tool.usb import LIBRARIES, SOURCES, SLOTS, UsbWatcher, as_user, candidates, copy_library, migrate, stick_folders
+from rx3tool.usb import LIBRARIES, SOURCES, SLOTS, STRAY, UsbWatcher, as_user, candidates, copy_library, migrate, stick_folders
 
 A, B = 'CA98-D2DE', '1234-ABCD'
 
@@ -207,8 +207,11 @@ class UsbTests(unittest.TestCase):
         with Tree(self.runtime) as tree:
             migrate(tree, USB2, dst)             # nothing left to move
         (dst / 'stray').write_text('x')
-        with Tree(self.runtime) as tree, self.assertRaisesRegex(Failure, 'without a USB UUID'):
+        with Tree(self.runtime) as tree:
             migrate(tree, USB2, dst)
+        self.assertEqual(list(dst.iterdir()), [])
+        moved = list((self.runtime / STRAY).iterdir())
+        self.assertEqual([(p / 'stray').read_text() for p in moved], ['x'])
 
     def test_library_copy_never_overwrites_edits(self):
         src = self.runtime / USB1
