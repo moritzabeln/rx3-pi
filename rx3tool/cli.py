@@ -48,7 +48,7 @@ def selftest(verbose=False):
     failures = 0 if result.wasSuccessful() else 1
     stage('Existing replay tests')
     for name in ('test-navigation.py', 'test-pad-mapping.py', 'test-held-pads.py', 'test-shift-jog.py',
-                 'test-grid-jog.py', 'test-midi-reconnect.py', 'test-touch-recovery.py', 'test-ddj400-mapping.py',
+                 'test-grid-jog.py', 'test-jog-backspin.py', 'test-midi-reconnect.py', 'test-touch-recovery.py', 'test-ddj400-mapping.py',
                  'test-touch-panel.py'):
         code = subprocess.run([sys.executable, str(REPO / name)], cwd=str(REPO),
                               capture_output=not verbose).returncode

@@ -101,6 +101,8 @@ Touch-only ZOOM−/+ buttons sit above the native ZOOM/GRID selector. They chang
 
 SHIFT+jog now translates the selected MIDI deck’s beatgrid in5ms steps per16ticks, preserving scratch cancellation. Native offset and rendered grid movement passed replay tests; physical feel remains unverified. Edits outside visible GRID now use the native save lifecycle; alternating edits on both decks survived a player restart. Cross-deck interaction with an already-open GRID editor and heavy-I/O save stress remain unverified. The matched executable/shim checkpoint now uses BiteDJ’s preferred 6/10/16/25% tempo ranges, including native 25% artwork and hundredths display. This does not establish full controller parity; see the 25% range instructions below.
 
+Backspin: when the platter is released while spinning fast (>=3x over the last 100 ms, either direction), the bridge keeps the native jog touch held while the wheel coasts. It releases the touch when the wheel falls below 0.3x, after 3 s, on a new touch, on SHIFT, or on controller loss. Covered by `test-jog-backspin.py`; the thresholds and physical feel are unverified on hardware.
+
 ## FLX6 navigation
 
 User preference: match the installed BiteDJ FLX6 behavior; disclose RX3 limitations rather than silently replacing preferred mappings. Preserve BiteDJ files.

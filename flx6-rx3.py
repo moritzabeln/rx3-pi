@@ -3,7 +3,7 @@
 Hot-cue, beat-loop and default beat-jump banks supported. LED feedback for profiles with an LED map.
 DDJ-400 BEAT FX (select, channel, beat, level/depth, on/off) drives the RX3's native Beat FX.
 """
-import argparse, ctypes, errno, json, os, re, signal, struct, subprocess, time
+import argparse, collections, ctypes, errno, json, os, re, signal, struct, subprocess, time
 import xml.etree.ElementTree as ET
 BUTTONS={'play':0x4101,'cue_default':0x4102,'loop_in':0x410c,'loop_out':0x410d,
  'reloop_toggle':0x410e,'slip_enabled':0x4110,'sync_enabled':0x4112,'sync_leader':0x4111,
@@ -22,6 +22,11 @@ BEAT_FX_TYPES=14
 # DDJ-400 CH SELECT notes -> RX3 EnBeatEffectSelectChannel (0 CH1, 1 CH2, 5 MASTER).
 BEAT_FX_CHANNELS={0x10:0,0x11:1,0x14:5}
 BEAT_FX_LED=48
+# Backspin: a fast spin at touch release keeps the RX3 jog touch held while the wheel coasts.
+COAST_START_SPEED=3.  # platter speed (1x = 33 1/3 RPM) over the last COAST_WINDOW seconds
+COAST_END_SPEED=.3
+COAST_WINDOW=.1
+COAST_MAX=3.
 PAD_BANKS={"pad-hotcue":0,"pad-beatloop":1,"pad-beatjump":3}
 LOOP_SIZES=("0.25","0.5","1","2","4","8","16","32")
 # jog_scale converts platter ticks to the FLX6's 7200 ticks per revolution.
@@ -60,7 +65,7 @@ class Bridge:
  def __init__(self,xml,emit,clock=time.monotonic,model='DDJ-FLX6'):
   profile=PROFILES[model];prefix=profile['prefix'];self.jog_scale=profile['jog_scale'];self.zoom_sign=profile['zoom_sign']
   self.leds=profile['leds'];self.led_sent={};self.query=profile.get('query')
-  self.clock=clock;self.jogs={ch:dict(total=0,delta=0,last=clock(),moved=0,speed=0) for ch in (1,2)}
+  self.clock=clock;self.jogs={ch:dict(total=0,delta=0,last=clock(),moved=0,speed=0,hist=collections.deque(),coast=None) for ch in (1,2)}
   self.emit=emit;self.mapping={};self.msb={};self.held=set();self.pad_held={};self.status=None;self.data=[]
   self.shift={1:False,2:False}
   self.grid_ticks={1:0,2:0}
@@ -131,6 +136,7 @@ class Bridge:
    down=bool(value);self.shift[ch]=down
    self.grid_ticks[ch]=0
    if down:
+    self.jogs[ch]['coast']=None
     self.stop_jog(ch)
     if (0x4306,ch) in self.held:
      self.emit(0x4306,2,ch,0,0.,0);self.held.discard((0x4306,ch))
@@ -151,7 +157,10 @@ class Bridge:
   elif mode=='jog':
    if self.shift[ch]:self.grid_jog(ch,value);return
    j=self.jogs[ch];delta=(value-64)*self.jog_scale
-   if delta:j['delta']+=delta;j['total']+=delta;j['moved']=self.clock()
+   if delta:
+    now=self.clock();j['delta']+=delta;j['total']+=delta;j['moved']=now
+    j['hist'].append((now,delta))
+    while now-j['hist'][0][0]>COAST_WINDOW:j['hist'].popleft()
   elif mode in PAD_BANKS:
    bank=PAD_BANKS[mode];identity=(key,ch)
    if value:
@@ -169,7 +178,14 @@ class Bridge:
   elif mode=='button':
    op=0 if value else 2
    if key==0x4306 and self.shift[ch]:return
-   if key==0x4306 and op==2:self.stop_jog(ch)
+   if key==0x4306 and self.jogs[ch]['coast'] is not None:
+    # The native touch is still held; a new touch takes over, and its release ends it normally.
+    if op==0:self.jogs[ch]['coast']=None
+    return
+   if key==0x4306 and op==2:
+    if abs(self.recent_speed(ch))>=COAST_START_SPEED:
+     self.jogs[ch]['coast']=self.clock();return
+    self.stop_jog(ch)
    if op==0:self.held.add((key,ch))
    else:self.held.discard((key,ch))
    self.emit(key,op,ch,0,0.,0)
@@ -209,9 +225,19 @@ class Bridge:
   return round(self.jogs[ch]['total']*1620/7200)&65535
  def stop_jog(self,ch):
   j=self.jogs[ch];self.emit(0x4305,4,ch,0,0.,self.pulse(ch));j['delta']=0;j['speed']=0;j['last']=self.clock()
+ def recent_speed(self,ch):
+  hist=self.jogs[ch]['hist'];now=self.clock()
+  while hist and now-hist[0][0]>COAST_WINDOW:hist.popleft()
+  return sum(d for _,d in hist)*1.8/(7200*COAST_WINDOW)
+ def end_coast(self,ch):
+  self.jogs[ch]['coast']=None;self.stop_jog(ch)
+  if (0x4306,ch) in self.held:self.held.discard((0x4306,ch));self.emit(0x4306,2,ch,0,0.,0)
  def tick(self):
   now=self.clock()
   for ch,j in self.jogs.items():
+   if j['coast'] is not None and (now-j['coast']>=COAST_MAX or abs(self.recent_speed(ch))<COAST_END_SPEED):
+    # The wheel has stopped or the 3 s limit passed: hand the deck back to normal playback.
+    self.end_coast(ch);continue
    elapsed=now-j['last']
    if elapsed<.01:continue
    if j['delta']:
@@ -223,6 +249,7 @@ class Bridge:
    elif not j['speed']:j['last']=now
  def release(self):
   for ch,j in self.jogs.items():
+   j['coast']=None;j['hist'].clear()
    if j['speed'] or j['delta']:self.stop_jog(ch)
   for key,ch in list(self.held):self.emit(key,2,ch,0,0.,0)
   self.held.clear();self.pad_held.clear()
